@@ -278,9 +278,10 @@ async def run(mode, url, conns, duration, stats, payload_size):
             workers.append(asyncio.create_task(udp_worker(i, url, stats, duration, stop, payload_size)))
         elif mode == "h2":
             workers.append(asyncio.create_task(h2_worker(i, url, stats, duration, stop, payload_size)))
-    await asyncio.gather(*workers, return_exceptions=True)
+    # Use shield to prevent gather from being cancelled if one worker takes long
+    results = await asyncio.shield(asyncio.gather(*workers, return_exceptions=True))
     stop.set()
-    await task
+    await asyncio.wait_for(task, timeout=2.0)
     return stats
 
 def main():
