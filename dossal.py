@@ -11,6 +11,9 @@ Targets are local only. JSON stats output.
 """
 import asyncio, ssl, socket, json, math, struct, random, time, argparse, signal, sys, base64
 from urllib.parse import urlparse
+from h2.connection import H2Connection
+from h2.config import H2Configuration
+from h2.events import ResponseReceived, DataReceived
 
 class Stats:
     def __init__(self):
@@ -153,6 +156,46 @@ async def udp_worker(name, url, stats, duration, stop, payload_size=1400):
             break
     sock.close()
 
+async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
+    host, port, path = parse_http(url)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
+    config = H2Configuration(client_side=True)
+    conn = H2Connection(config=config)
+    conn.initiate_connection()
+    writer.write(conn.data_to_send())
+    await writer.drain()
+    headers = [
+        (':method', 'GET'),
+        (':scheme', 'https'),
+        (':authority', host),
+        (':path', path),
+        ('user-agent', 'dossal/0.3'),
+    ]
+    while not stop.is_set():
+        try:
+            stream_id = conn.get_next_available_stream_id()
+            conn.send_headers(stream_id, headers)
+            data = conn.data_to_send()
+            if data:
+                writer.write(data); await writer.drain()
+            # Read response
+            resp = await asyncio.wait_for(reader.read(8192), timeout=1.0)
+            events = conn.receive_data(resp)
+            for event in events:
+                if isinstance(event, ResponseReceived):
+                    stats.requests += 1
+                    stats.bytes += len(resp)
+        except Exception:
+            stats.errors += 1
+            break
+    try:
+        writer.close(); await writer.wait_closed()
+    except Exception:
+        pass
+
 async def run(mode, url, conns, duration, stats, payload_size):
     stop = asyncio.Event()
     async def finish():
@@ -170,6 +213,8 @@ async def run(mode, url, conns, duration, stats, payload_size):
             workers.append(asyncio.create_task(tcp_worker(i, url, stats, duration, stop, payload_size)))
         elif mode == "udp":
             workers.append(asyncio.create_task(udp_worker(i, url, stats, duration, stop, payload_size)))
+        elif mode == "h2":
+            workers.append(asyncio.create_task(h2_worker(i, url, stats, duration, stop, payload_size)))
     await asyncio.gather(*workers, return_exceptions=True)
     stop.set()
     await task
@@ -177,7 +222,7 @@ async def run(mode, url, conns, duration, stats, payload_size):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", default="http", choices=["http","https","websocket","tcp","udp"])
+    ap.add_argument("--mode", default="http", choices=["http","https","websocket","tcp","udp","h2"])
     ap.add_argument("--url", required=True)
     ap.add_argument("--connections", type=int, default=100)
     ap.add_argument("--duration", type=int, default=10)
@@ -187,7 +232,7 @@ def main():
     stats = Stats()
     # choose default payload size by mode
     if args.payload_size is None:
-        defaults = {"http": 0, "https": 0, "websocket": 128, "tcp": 1024, "udp": 1400}
+        defaults = {"http": 0, "https": 0, "websocket": 128, "tcp": 1024, "udp": 1400, "h2": 1024}
         payload_size = defaults[args.mode]
     else:
         payload_size = args.payload_size
