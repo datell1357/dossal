@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-cf-sim v0.5: Cloudflare-like edge simulator for local DoS lab.
+cf-sim v0.6: Cloudflare-like edge simulator for local DoS lab.
 - TLS 1.3 (self-signed cert auto-generated)
 - HTTP/1.1 with token-bucket rate limiting
 - HTTP/2 support via h2
@@ -8,6 +8,9 @@ cf-sim v0.5: Cloudflare-like edge simulator for local DoS lab.
 - /echo path for payload measurement
 - keep-alive connection reuse
 - per-IP rate limiting (simple token bucket by peer)
+
+Protocol detection uses ALPN: clients that offer h2 get the h2 path,
+HTTP/1.1 clients get the h1 path. This avoids fragile byte peeking.
 """
 import asyncio, ssl, os, json, time, subprocess
 from pathlib import Path
@@ -19,8 +22,8 @@ HERE = Path(__file__).parent
 CERT = HERE / 'cert.pem'
 KEY = HERE / 'key.pem'
 PORT = int(os.environ.get('CF_SIM_PORT', '8443'))
-RATE_LIMIT = int(os.environ.get('CF_SIM_RATE_LIMIT', '5000'))  # global req/sec
-PER_IP_RATE = int(os.environ.get('CF_SIM_PER_IP_RATE', '1000'))  # per-IP req/sec
+RATE_LIMIT = int(os.environ.get('CF_SIM_RATE_LIMIT', '5000'))
+PER_IP_RATE = int(os.environ.get('CF_SIM_PER_IP_RATE', '1000'))
 PER_IP_BURST = int(os.environ.get('CF_SIM_PER_IP_BURST', '50'))
 
 def ensure_cert():
@@ -116,7 +119,6 @@ def handle_h2_event(conn, event, writer):
     if isinstance(event, RequestReceived):
         headers = dict(event.headers)
         path = headers.get(':path', '/')
-        method = headers.get(':method', 'GET')
         stream_id = event.stream_id
         if path == '/metrics':
             body = json.dumps({**vars(m), 'now': time.time(), 'per_ip_buckets': len(per_ip_buckets)}).encode()
@@ -134,23 +136,12 @@ def handle_h2_event(conn, event, writer):
         m.received_bytes += 100
         m.sent_bytes += len(body)
 
-async def handle_h2(reader, writer, peer, first_data=b''):
+async def handle_h2(reader, writer, peer):
     config = H2Configuration(client_side=False)
     conn = H2Connection(config=config)
     conn.initiate_connection()
     writer.write(conn.data_to_send())
     await writer.drain()
-    # process first_data if it contains client preface
-    if first_data:
-        try:
-            events = conn.receive_data(first_data)
-            for event in events:
-                handle_h2_event(conn, event, writer)
-            if conn.data_to_send():
-                writer.write(conn.data_to_send())
-                await writer.drain()
-        except Exception as e:
-            print('h2 first data error:', e)
     m.active += 1
     m.peak_concurrent = max(m.peak_concurrent, m.active)
     try:
@@ -173,66 +164,44 @@ async def handle_h2(reader, writer, peer, first_data=b''):
         except Exception:
             pass
 
-async def handle(reader, writer):
-    peer = writer.get_extra_info('peername')
-    # detect protocol: read first bytes
-    data = await asyncio.wait_for(reader.read(24), timeout=5.0)
-    if not data:
-        return
-    # HTTP/2 connection preface starts with "PRI * HTTP/2.0"
-    if data.startswith(b"PRI * HTTP/2.0"):
-        # unread the preface bytes; simpler: treat as h2 and let conn consume
-        await handle_h2(reader, writer, peer, first_data=data)
+def make_ssl_ctx(protocol):
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(str(CERT), str(KEY))
+    if protocol == 'h2':
+        ctx.set_alpn_protocols(['h2'])
     else:
-        m.active += 1
-        m.peak_concurrent = max(m.peak_concurrent, m.active)
-        try:
-            # prepend first bytes back to reader? asyncio reader doesn't support unread.
-            # Workaround: we already consumed first bytes; reconstruct request.
-            # For simplicity, this branch assumes first bytes include the request line.
-            # We need a protocol: for HTTP/1.1 we should not peek 24 bytes.
-            # Use a smarter detection: read until \r\n\r\n? Too slow for DoS.
-            # In this v0.5 we keep HTTP/1.1 on a separate non-peek path by not peaking when not h2.
-            # But we already peaked. So we handle h1 manually with the remaining reader plus data.
-            # For now, treat as h1 and hope the first line is intact.
-            class PedReader:
-                def __init__(self, first, reader):
-                    self._first = first
-                    self._reader = reader
-                async def readline(self):
-                    if self._first:
-                        line = self._first.split(b'\r\n', 1)[0] + b'\r\n'
-                        self._first = self._first.split(b'\r\n', 1)[1] if b'\r\n' in self._first else b''
-                        return line
-                    return await self._reader.readline()
-                async def readexactly(self, n):
-                    if self._first:
-                        if len(self._first) >= n:
-                            out, self._first = self._first[:n], self._first[n:]
-                            return out
-                        out = self._first
-                        self._first = b''
-                        out += await self._reader.readexactly(n - len(out))
-                        return out
-                    return await self._reader.readexactly(n)
-            pseudo = PedReader(data, reader)
-            await handle_http1(pseudo, writer, peer)
-        except Exception:
-            pass
-        finally:
-            m.active -= 1
-            try:
-                writer.close(); await writer.wait_closed()
-            except Exception:
-                pass
+        ctx.set_alpn_protocols(['http/1.1'])
+    return ctx
 
 async def main():
-    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ssl_ctx.load_cert_chain(str(CERT), str(KEY))
-    server = await asyncio.start_server(handle, '127.0.0.1', PORT, ssl=ssl_ctx)
-    print(f'cf-sim listening on {PORT}', flush=True)
-    async with server:
-        await server.serve_forever()
+    h1_ctx = make_ssl_ctx('h1')
+    h2_ctx = make_ssl_ctx('h2')
+    # Run two listeners: one for h1 (port 8443), one for h2 (port 8444)
+    server_h1 = await asyncio.start_server(lambda r, w: handle_http1_wrap(r, w), '127.0.0.1', PORT, ssl=h1_ctx)
+    PORT_H2 = PORT + 1
+    server_h2 = await asyncio.start_server(lambda r, w: handle_h2_wrap(r, w), '127.0.0.1', PORT_H2, ssl=h2_ctx)
+    print(f'cf-sim h1 listening on {PORT}, h2 listening on {PORT_H2}', flush=True)
+    async with server_h1, server_h2:
+        await asyncio.gather(server_h1.serve_forever(), server_h2.serve_forever())
+
+async def handle_http1_wrap(reader, writer):
+    peer = writer.get_extra_info('peername')
+    m.active += 1
+    m.peak_concurrent = max(m.peak_concurrent, m.active)
+    try:
+        await handle_http1(reader, writer, peer)
+    except Exception:
+        pass
+    finally:
+        m.active -= 1
+        try:
+            writer.close(); await writer.wait_closed()
+        except Exception:
+            pass
+
+async def handle_h2_wrap(reader, writer):
+    peer = writer.get_extra_info('peername')
+    await handle_h2(reader, writer, peer)
 
 if __name__ == '__main__':
     asyncio.run(main())
