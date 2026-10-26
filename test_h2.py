@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test h2 connection with detailed debug output."""
+"""Test h2 connection with detailed debug output - verify response data."""
 import asyncio, ssl, time
 from h2.connection import H2Connection
 from h2.config import H2Configuration
@@ -16,28 +16,22 @@ async def test():
     reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
     print(f"Connection established")
     
-    # Check ALPN
-    transport = writer.transport
-    if hasattr(transport, 'get_extra_info'):
-        alpn = transport.get_extra_info('selected_alpn_protocol')
-        print(f"ALPN: {alpn}")
-    
     config = H2Configuration(client_side=True)
     conn = H2Connection(config=config)
     conn.initiate_connection()
     
     preface = conn.data_to_send()
-    print(f"Sending preface ({len(preface)} bytes): {preface[:24]}...")
+    print(f"Sending preface ({len(preface)} bytes)")
     writer.write(preface)
     await writer.drain()
     
     # Wait a bit for server SETTINGS
     await asyncio.sleep(0.1)
     data = await asyncio.wait_for(reader.read(8192), timeout=1.0)
-    print(f"Received from server ({len(data)} bytes): {data[:24]}...")
+    print(f"Received from server ({len(data)} bytes)")
     
     events = conn.receive_data(data)
-    print(f"Events: {events}")
+    print(f"Events after preface: {len(events)} events")
     
     # Send a request
     headers = [
@@ -55,18 +49,32 @@ async def test():
     writer.write(data)
     await writer.drain()
     
-    # Wait for response
-    await asyncio.sleep(0.1)
-    data = await asyncio.wait_for(reader.read(8192), timeout=1.0)
-    print(f"Received response data ({len(data)} bytes): {data[:24]}...")
+    # Wait for response with longer timeout
+    print("Waiting for response...")
+    response_data = b''
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        try:
+            chunk = await asyncio.wait_for(reader.read(8192), timeout=0.1)
+            if not chunk:
+                break
+            response_data += chunk
+            print(f"Received {len(chunk)} bytes of response")
+            events = conn.receive_data(chunk)
+            for event in events:
+                if isinstance(event, ResponseReceived):
+                    print(f"  Response received: {dict(event.headers)}")
+                elif isinstance(event, DataReceived):
+                    print(f"  Data received: {event.data[:50]}")
+            if any(isinstance(e, ResponseReceived) for e in events):
+                break
+        except asyncio.TimeoutError:
+            continue
     
-    events = conn.receive_data(data)
-    print(f"Response events: {events}")
-    for event in events:
-        if isinstance(event, ResponseReceived):
-            print(f"  Response received: {event.headers}")
-        elif isinstance(event, DataReceived):
-            print(f"  Data received: {event.data[:50]}")
+    if response_data:
+        print(f"Total response data: {len(response_data)} bytes")
+    else:
+        print("No response data received")
     
     writer.close()
     await writer.wait_closed()
