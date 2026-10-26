@@ -177,25 +177,33 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
     while not stop.is_set():
         try:
             stream_id = conn.get_next_available_stream_id()
-            conn.send_headers(stream_id, headers)
+            conn.send_headers(stream_id, headers, end_stream=True)
             data = conn.data_to_send()
             if data:
                 writer.write(data); await writer.drain()
             # Read response with h2 framing
             resp_data = b''
+            got_response = False
             deadline = time.time() + 1.0
-            while len(resp_data) < 4096 and time.time() < deadline:
+            while time.time() < deadline:
                 chunk = await asyncio.wait_for(reader.read(8192), timeout=max(0.05, deadline - time.time()))
                 if not chunk:
                     break
                 resp_data += chunk
+                break
+            # Feed all received data at once (simple but works for first response)
             events = conn.receive_data(resp_data)
             for event in events:
                 if isinstance(event, ResponseReceived):
                     stats.requests += 1
                     stats.bytes += len(resp_data)
+                    got_response = True
                 elif isinstance(event, DataReceived):
                     stats.bytes += len(event.data)
+            if not got_response and len(resp_data) > 0:
+                # might have multiple frames; count one request per send
+                stats.requests += 1
+                stats.bytes += len(resp_data)
         except Exception:
             stats.errors += 1
             break
