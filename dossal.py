@@ -78,20 +78,33 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
     reader, writer = await asyncio.open_connection(host, port)
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n"
            f"User-Agent: dossal/0.4\r\n\r\n")
-    while not stop.is_set():
-        try:
-            writer.write(req.encode())
-            await writer.drain()
-            resp = await _read_http_response(reader)
-            stats.requests += 1
-            stats.bytes += len(resp)
-        except Exception:
-            stats.errors += 1
-            break
-    # Force close: transport.close() immediately, skip graceful SSL shutdown
-    transport = writer.transport
-    if transport:
-        transport.close()
+    req_bytes = req.encode()
+    
+    async def writer_loop():
+        while not stop.is_set():
+            try:
+                writer.write(req_bytes)
+                await writer.drain()
+            except Exception:
+                break
+    
+    async def reader_loop():
+        while not stop.is_set():
+            try:
+                resp = await _read_http_response(reader)
+                stats.requests += 1
+                stats.bytes += len(resp)
+            except Exception:
+                stats.errors += 1
+                break
+    
+    write_task = asyncio.create_task(writer_loop())
+    await reader_loop()
+    stop.set()
+    write_task.cancel()
+    # Force close
+    if writer.transport:
+        writer.transport.close()
     try:
         await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
     except Exception:
@@ -105,20 +118,33 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
     reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n"
            f"User-Agent: dossal/0.4\r\n\r\n")
-    while not stop.is_set():
-        try:
-            writer.write(req.encode())
-            await writer.drain()
-            resp = await _read_http_response(reader)
-            stats.requests += 1
-            stats.bytes += len(resp)
-        except Exception:
-            stats.errors += 1
-            break
-    # Force close: transport.close() immediately, skip graceful SSL shutdown
-    transport = writer.transport
-    if transport:
-        transport.close()
+    req_bytes = req.encode()
+    
+    async def writer_loop():
+        while not stop.is_set():
+            try:
+                writer.write(req_bytes)
+                await writer.drain()
+            except Exception:
+                break
+    
+    async def reader_loop():
+        while not stop.is_set():
+            try:
+                resp = await _read_http_response(reader)
+                stats.requests += 1
+                stats.bytes += len(resp)
+            except Exception:
+                stats.errors += 1
+                break
+    
+    write_task = asyncio.create_task(writer_loop())
+    await reader_loop()
+    stop.set()
+    write_task.cancel()
+    # Force close
+    if writer.transport:
+        writer.transport.close()
     try:
         await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
     except Exception:
