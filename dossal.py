@@ -181,13 +181,21 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
             data = conn.data_to_send()
             if data:
                 writer.write(data); await writer.drain()
-            # Read response
-            resp = await asyncio.wait_for(reader.read(8192), timeout=1.0)
-            events = conn.receive_data(resp)
+            # Read response with h2 framing
+            resp_data = b''
+            deadline = time.time() + 1.0
+            while len(resp_data) < 4096 and time.time() < deadline:
+                chunk = await asyncio.wait_for(reader.read(8192), timeout=max(0.05, deadline - time.time()))
+                if not chunk:
+                    break
+                resp_data += chunk
+            events = conn.receive_data(resp_data)
             for event in events:
                 if isinstance(event, ResponseReceived):
                     stats.requests += 1
-                    stats.bytes += len(resp)
+                    stats.bytes += len(resp_data)
+                elif isinstance(event, DataReceived):
+                    stats.bytes += len(event.data)
         except Exception:
             stats.errors += 1
             break
