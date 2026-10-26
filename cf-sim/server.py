@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-cf-sim v0.6: Cloudflare-like edge simulator for local DoS lab.
+cf-sim v0.7: Cloudflare-like edge simulator for local DoS lab.
 - TLS 1.3 (self-signed cert auto-generated)
-- HTTP/1.1 with token-bucket rate limiting
-- HTTP/2 support via h2
+- HTTP/1.1 with token-bucket rate limiting (per-IP + global)
+- HTTP/2 support via h2 (separate port with ALPN)
 - /metrics JSON endpoint
 - /echo path for payload measurement
 - keep-alive connection reuse
-- per-IP rate limiting (simple token bucket by peer)
-
-Protocol detection uses ALPN: clients that offer h2 get the h2 path,
-HTTP/1.1 clients get the h1 path. This avoids fragile byte peeking.
+- 429 responses: no Content-Length, no body (faster for attacker)
+- Rate limits configurable via env vars
 """
 import asyncio, ssl, os, json, time, subprocess
 from pathlib import Path
@@ -90,7 +88,8 @@ async def handle_http1(reader, writer, peer):
         ip_bucket = await get_bucket(peer)
         if not (await global_bucket.consume() and await ip_bucket.consume()):
             m.limited += 1
-            writer.write(b'HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n')
+            # 429: minimal response, no Content-Length, no body
+            writer.write(b'HTTP/1.1 429 Too Many Requests\r\n\r\n')
             await writer.drain()
             continue
         result = await read_headers(reader)
