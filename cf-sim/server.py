@@ -137,7 +137,13 @@ def handle_h2_event(conn, event, writer, peer):
         m.requests += 1
         m.received_bytes += 100
         m.sent_bytes += len(body)
-        print(f"h2: sent response for stream {stream_id}, data_to_send={len(conn.data_to_send())}", flush=True)
+        # Send response immediately after processing the request
+        if conn.data_to_send():
+            out = conn.data_to_send()
+            print(f"h2: sending response ({len(out)} bytes) for stream {stream_id} to {peer}", flush=True)
+            writer.write(out)
+            import asyncio
+            asyncio.ensure_future(writer.drain())
     else:
         print(f"h2: other event: {type(event).__name__}", flush=True)
 
