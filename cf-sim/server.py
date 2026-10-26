@@ -145,6 +145,7 @@ async def handle_h2(reader, writer, peer):
     await writer.drain()
     m.active += 1
     m.peak_concurrent = max(m.peak_concurrent, m.active)
+    print(f"h2: connection from {peer}", flush=True)
     try:
         while True:
             data = await asyncio.wait_for(reader.read(65535), timeout=5.0)
@@ -152,11 +153,11 @@ async def handle_h2(reader, writer, peer):
                 break
             try:
                 events = conn.receive_data(data)
-            except ProtocolError:
-                # Client sent invalid preamble or malformed frames; close connection
+                for event in events:
+                    handle_h2_event(conn, event, writer)
+            except ProtocolError as e:
+                print(f"h2: ProtocolError from {peer}: {e}", flush=True)
                 break
-            for event in events:
-                handle_h2_event(conn, event, writer)
             if conn.data_to_send():
                 writer.write(conn.data_to_send())
                 await writer.drain()
@@ -164,6 +165,7 @@ async def handle_h2(reader, writer, peer):
         pass
     finally:
         m.active -= 1
+        print(f"h2: connection closed {peer}", flush=True)
         try:
             writer.close(); await writer.wait_closed()
         except Exception:
