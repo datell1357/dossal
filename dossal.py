@@ -177,6 +177,7 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
         ('user-agent', 'dossal/0.3'),
     ]
     pending_stream = None
+    error = None
     while not stop.is_set():
         try:
             stream_id = conn.get_next_available_stream_id()
@@ -200,9 +201,12 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
                         break
                     elif isinstance(event, DataReceived):
                         stats.bytes += len(event.data)
-        except Exception:
+        except Exception as e:
             stats.errors += 1
+            error = e
             break
+    if error:
+        print(f"h2_worker error: {error}", file=sys.stderr)
     try:
         writer.close(); await writer.wait_closed()
     except Exception:
