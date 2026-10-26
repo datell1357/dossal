@@ -17,6 +17,7 @@ from pathlib import Path
 from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import RequestReceived, StreamEnded
+from h2.exceptions import ProtocolError
 
 HERE = Path(__file__).parent
 CERT = HERE / 'cert.pem'
@@ -149,7 +150,11 @@ async def handle_h2(reader, writer, peer):
             data = await asyncio.wait_for(reader.read(65535), timeout=5.0)
             if not data:
                 break
-            events = conn.receive_data(data)
+            try:
+                events = conn.receive_data(data)
+            except ProtocolError:
+                # Client sent invalid preamble or malformed frames; close connection
+                break
             for event in events:
                 handle_h2_event(conn, event, writer)
             if conn.data_to_send():
