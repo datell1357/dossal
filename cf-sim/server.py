@@ -134,12 +134,23 @@ def handle_h2_event(conn, event, writer):
         m.received_bytes += 100
         m.sent_bytes += len(body)
 
-async def handle_h2(reader, writer, peer):
+async def handle_h2(reader, writer, peer, first_data=b''):
     config = H2Configuration(client_side=False)
     conn = H2Connection(config=config)
     conn.initiate_connection()
     writer.write(conn.data_to_send())
     await writer.drain()
+    # process first_data if it contains client preface
+    if first_data:
+        try:
+            events = conn.receive_data(first_data)
+            for event in events:
+                handle_h2_event(conn, event, writer)
+            if conn.data_to_send():
+                writer.write(conn.data_to_send())
+                await writer.drain()
+        except Exception as e:
+            print('h2 first data error:', e)
     m.active += 1
     m.peak_concurrent = max(m.peak_concurrent, m.active)
     try:
@@ -171,7 +182,7 @@ async def handle(reader, writer):
     # HTTP/2 connection preface starts with "PRI * HTTP/2.0"
     if data.startswith(b"PRI * HTTP/2.0"):
         # unread the preface bytes; simpler: treat as h2 and let conn consume
-        await handle_h2(reader, writer, peer)
+        await handle_h2(reader, writer, peer, first_data=data)
     else:
         m.active += 1
         m.peak_concurrent = max(m.peak_concurrent, m.active)
