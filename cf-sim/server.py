@@ -11,7 +11,7 @@ cf-sim v0.5: Cloudflare-like edge simulator for local DoS lab.
 """
 import asyncio, ssl, os, json, time, subprocess
 from pathlib import Path
-from h2.connection import H2Connection, ConnectionType
+from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import RequestReceived, StreamEnded
 
