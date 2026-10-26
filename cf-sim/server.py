@@ -145,16 +145,36 @@ async def handle_h2(reader, writer, peer):
     config = H2Configuration(client_side=False)
     conn = H2Connection(config=config)
     conn.initiate_connection()
-    writer.write(conn.data_to_send())
+    # Send initial SETTINGS and wait for client SETTINGS before reading requests
+    initial = conn.data_to_send()
+    print(f"h2: sending initial SETTINGS ({len(initial)} bytes) to {peer}", flush=True)
+    writer.write(initial)
     await writer.drain()
+    
+    # Wait for client's SETTINGS frame
+    print(f"h2: waiting for client SETTINGS from {peer}", flush=True)
+    try:
+        client_data = await asyncio.wait_for(reader.read(1024), timeout=5.0)
+        print(f"h2: received {len(client_data)} bytes from client", flush=True)
+        conn.receive_data(client_data)
+        # ACK client SETTINGS
+        if conn.data_to_send():
+            ack = conn.data_to_send()
+            print(f"h2: sending ACK ({len(ack)} bytes) to {peer}", flush=True)
+            writer.write(ack)
+            await writer.drain()
+    except asyncio.TimeoutError:
+        print(f"h2: timeout waiting for client SETTINGS from {peer}", flush=True)
+    
     # Set TCP_NODELAY to disable Nagle's algorithm for lower latency
     sock = writer.transport.get_extra_info('socket')
     if sock:
         import socket
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    
     m.active += 1
     m.peak_concurrent = max(m.peak_concurrent, m.active)
-    print(f"h2: connection from {peer}", flush=True)
+    print(f"h2: connection ready from {peer}", flush=True)
     try:
         while True:
             data = await asyncio.wait_for(reader.read(65535), timeout=5.0)
