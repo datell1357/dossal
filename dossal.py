@@ -161,7 +161,9 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
+    ctx.set_alpn_protocols(['h2'])
     reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
+    negotiated = reader.protocol if hasattr(reader, 'protocol') else None
     config = H2Configuration(client_side=True)
     conn = H2Connection(config=config)
     conn.initiate_connection()
@@ -174,6 +176,7 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
         (':path', path),
         ('user-agent', 'dossal/0.3'),
     ]
+    pending_stream = None
     while not stop.is_set():
         try:
             stream_id = conn.get_next_available_stream_id()
@@ -181,29 +184,22 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
             data = conn.data_to_send()
             if data:
                 writer.write(data); await writer.drain()
-            # Read response with h2 framing
-            resp_data = b''
+            # Read responses until we get one for the pending stream
             got_response = False
             deadline = time.time() + 1.0
-            while time.time() < deadline:
+            while time.time() < deadline and not got_response:
                 chunk = await asyncio.wait_for(reader.read(8192), timeout=max(0.05, deadline - time.time()))
                 if not chunk:
                     break
-                resp_data += chunk
-                break
-            # Feed all received data at once (simple but works for first response)
-            events = conn.receive_data(resp_data)
-            for event in events:
-                if isinstance(event, ResponseReceived):
-                    stats.requests += 1
-                    stats.bytes += len(resp_data)
-                    got_response = True
-                elif isinstance(event, DataReceived):
-                    stats.bytes += len(event.data)
-            if not got_response and len(resp_data) > 0:
-                # might have multiple frames; count one request per send
-                stats.requests += 1
-                stats.bytes += len(resp_data)
+                events = conn.receive_data(chunk)
+                for event in events:
+                    if isinstance(event, ResponseReceived):
+                        stats.requests += 1
+                        stats.bytes += len(chunk)
+                        got_response = True
+                        break
+                    elif isinstance(event, DataReceived):
+                        stats.bytes += len(event.data)
         except Exception:
             stats.errors += 1
             break
