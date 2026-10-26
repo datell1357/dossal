@@ -1,0 +1,13 @@
+{
+  "tool": "dossal",
+  "version": "0.3",
+  "mode": "http",
+  "url": "http://127.0.0.1:8080",
+  "connections": 100,
+  "duration_s": 10,
+  "requests": 751910,
+  "rps": 75191.0,
+  "bytes": 107523130,
+  "bps": 10752313.0,
+  "errors": 0
+}
