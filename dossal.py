@@ -98,11 +98,11 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
                 stats.errors += 1
                 break
     
+    # Start writer task, then immediately run reader
     write_task = asyncio.create_task(writer_loop())
     await reader_loop()
     stop.set()
     write_task.cancel()
-    # Force close
     if writer.transport:
         writer.transport.close()
     try:
