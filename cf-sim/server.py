@@ -157,14 +157,15 @@ async def handle_h2(reader, writer, peer):
                 break
             try:
                 events = conn.receive_data(data)
+                # Process all events first
                 for event in events:
                     handle_h2_event(conn, event, writer, peer)
-                    # Send response immediately after each event to avoid buffering
-                    if conn.data_to_send():
-                        out = conn.data_to_send()
-                        print(f"h2: sending {len(out)} bytes back to {peer} (after event)", flush=True)
-                        writer.write(out)
-                        await writer.drain()
+                # Then send all pending data at once
+                if conn.data_to_send():
+                    out = conn.data_to_send()
+                    print(f"h2: sending {len(out)} bytes back to {peer} (after all events)", flush=True)
+                    writer.write(out)
+                    await writer.drain()
             except ProtocolError as e:
                 print(f"h2: ProtocolError from {peer}: {e}", flush=True)
                 break
