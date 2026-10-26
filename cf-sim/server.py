@@ -159,14 +159,15 @@ async def handle_h2(reader, writer, peer):
                 events = conn.receive_data(data)
                 for event in events:
                     handle_h2_event(conn, event, writer, peer)
+                    # Send response immediately after each event to avoid buffering
+                    if conn.data_to_send():
+                        out = conn.data_to_send()
+                        print(f"h2: sending {len(out)} bytes back to {peer} (after event)", flush=True)
+                        writer.write(out)
+                        await writer.drain()
             except ProtocolError as e:
                 print(f"h2: ProtocolError from {peer}: {e}", flush=True)
                 break
-            if conn.data_to_send():
-                out = conn.data_to_send()
-                print(f"h2: sending {len(out)} bytes back to {peer}", flush=True)
-                writer.write(out)
-                await writer.drain()
     except (asyncio.TimeoutError, ConnectionError):
         pass
     finally:
