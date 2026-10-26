@@ -92,7 +92,8 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
             stats.errors += 1
             break
     try:
-        writer.close(); await writer.wait_closed()
+        writer.close()
+        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
     except Exception:
         pass
 
@@ -118,7 +119,8 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
             stats.errors += 1
             break
     try:
-        writer.close(); await writer.wait_closed()
+        writer.close()
+        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
     except Exception:
         pass
 
@@ -151,7 +153,8 @@ async def ws_worker(name, url, stats, duration, stop, payload_size=128):
             stats.errors += 1
             break
     try:
-        writer.close(); await writer.wait_closed()
+        writer.close()
+        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
     except Exception:
         pass
 
@@ -167,7 +170,8 @@ async def tcp_worker(name, url, stats, duration, stop, payload_size=1024):
             stats.errors += 1
             break
     try:
-        writer.close(); await writer.wait_closed()
+        writer.close()
+        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
     except Exception:
         pass
 
@@ -250,7 +254,8 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
         import traceback
         print(f"h2_worker[{name}] error: {error}\n{traceback.format_exc()}", file=sys.stderr)
     try:
-        writer.close(); await writer.wait_closed()
+        writer.close()
+        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
     except Exception:
         pass
 
