@@ -137,13 +137,7 @@ def handle_h2_event(conn, event, writer, peer):
         m.requests += 1
         m.received_bytes += 100
         m.sent_bytes += len(body)
-        # Send response immediately after processing the request
-        if conn.data_to_send():
-            out = conn.data_to_send()
-            print(f"h2: sending response ({len(out)} bytes) for stream {stream_id} to {peer}", flush=True)
-            writer.write(out)
-            import asyncio
-            asyncio.ensure_future(writer.drain())
+        # Do NOT send here - the main loop will handle it
     else:
         print(f"h2: other event: {type(event).__name__}", flush=True)
 
@@ -192,9 +186,9 @@ async def handle_h2(reader, writer, peer):
                 for event in events:
                     handle_h2_event(conn, event, writer, peer)
                 # Then send all pending data at once
-                if conn.data_to_send():
-                    out = conn.data_to_send()
-                    print(f"h2: sending {len(out)} bytes back to {peer} (after all events)", flush=True)
+                out = conn.data_to_send()
+                if out:
+                    print(f"h2: sending {len(out)} bytes to {peer}", flush=True)
                     writer.write(out)
                     await writer.drain()
             except ProtocolError as e:
