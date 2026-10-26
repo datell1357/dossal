@@ -116,11 +116,12 @@ async def handle_http1(reader, writer, peer):
         m.sent_bytes += len(resp)
         await writer.drain()
 
-def handle_h2_event(conn, event, writer):
+def handle_h2_event(conn, event, writer, peer):
     if isinstance(event, RequestReceived):
         headers = dict(event.headers)
         path = headers.get(':path', '/')
         stream_id = event.stream_id
+        print(f"h2: RequestReceived on stream {stream_id}, path={path}", flush=True)
         if path == '/metrics':
             body = json.dumps({**vars(m), 'now': time.time(), 'per_ip_buckets': len(per_ip_buckets)}).encode()
             conn.send_headers(stream_id, [(b':status', b'200'), (b'content-type', b'application/json'), (b'content-length', str(len(body)).encode())])
@@ -136,6 +137,8 @@ def handle_h2_event(conn, event, writer):
         m.requests += 1
         m.received_bytes += 100
         m.sent_bytes += len(body)
+    else:
+        print(f"h2: other event: {type(event).__name__}", flush=True)
 
 async def handle_h2(reader, writer, peer):
     config = H2Configuration(client_side=False)
@@ -154,7 +157,7 @@ async def handle_h2(reader, writer, peer):
             try:
                 events = conn.receive_data(data)
                 for event in events:
-                    handle_h2_event(conn, event, writer)
+                    handle_h2_event(conn, event, writer, peer)
             except ProtocolError as e:
                 print(f"h2: ProtocolError from {peer}: {e}", flush=True)
                 break
