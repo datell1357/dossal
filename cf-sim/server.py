@@ -147,6 +147,11 @@ async def handle_h2(reader, writer, peer):
     conn.initiate_connection()
     writer.write(conn.data_to_send())
     await writer.drain()
+    # Set TCP_NODELAY to disable Nagle's algorithm for lower latency
+    sock = writer.transport.get_extra_info('socket')
+    if sock:
+        import socket
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     m.active += 1
     m.peak_concurrent = max(m.peak_concurrent, m.active)
     print(f"h2: connection from {peer}", flush=True)
@@ -182,6 +187,7 @@ async def handle_h2(reader, writer, peer):
 def make_ssl_ctx(protocol):
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(str(CERT), str(KEY))
+    ctx.options |= ssl.OP_NO_DELAY  # Enable Nagle's algorithm off / TCP_NODELAY
     if protocol == 'h2':
         ctx.set_alpn_protocols(['h2'])
     else:
