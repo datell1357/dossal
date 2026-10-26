@@ -163,20 +163,26 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
     ctx.verify_mode = ssl.CERT_NONE
     ctx.set_alpn_protocols(['h2'])
     reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
-    negotiated = reader.protocol if hasattr(reader, 'protocol') else None
     config = H2Configuration(client_side=True)
     conn = H2Connection(config=config)
     conn.initiate_connection()
     writer.write(conn.data_to_send())
     await writer.drain()
+    
+    # Wait for server SETTINGS
+    try:
+        data = await asyncio.wait_for(reader.read(8192), timeout=2.0)
+        events = conn.receive_data(data)
+    except Exception:
+        pass
+    
     headers = [
         (':method', 'GET'),
         (':scheme', 'https'),
         (':authority', host),
         (':path', path),
-        ('user-agent', 'dossal/0.3'),
+        ('user-agent', 'dossal/0.4'),
     ]
-    pending_stream = None
     error = None
     while not stop.is_set():
         try:
@@ -187,9 +193,9 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
                 writer.write(data); await writer.drain()
             # Read responses until we get one for the pending stream
             got_response = False
-            deadline = time.time() + 1.0
+            deadline = time.time() + 2.0
             while time.time() < deadline and not got_response:
-                chunk = await asyncio.wait_for(reader.read(8192), timeout=max(0.05, deadline - time.time()))
+                chunk = await asyncio.wait_for(reader.read(8192), timeout=max(0.1, deadline - time.time()))
                 if not chunk:
                     break
                 events = conn.receive_data(chunk)
@@ -206,7 +212,8 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
             error = e
             break
     if error:
-        print(f"h2_worker error: {error}", file=sys.stderr)
+        import traceback
+        print(f"h2_worker[{name}] error: {error}\n{traceback.format_exc()}", file=sys.stderr)
     try:
         writer.close(); await writer.wait_closed()
     except Exception:
