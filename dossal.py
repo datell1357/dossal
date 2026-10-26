@@ -49,7 +49,7 @@ async def _read_http_response(reader):
     # Read headers
     header_data = b''
     while b'\r\n\r\n' not in header_data:
-        chunk = await asyncio.wait_for(reader.read(1024), timeout=2.0)
+        chunk = await asyncio.wait_for(reader.read(1024), timeout=1.0)
         if not chunk:
             return b''
         header_data += chunk
@@ -64,7 +64,7 @@ async def _read_http_response(reader):
         if line.lower().startswith('content-length:'):
             content_length = int(line.split(':', 1)[1].strip())
             while len(body) < content_length:
-                chunk = await asyncio.wait_for(reader.read(8192), timeout=2.0)
+                chunk = await asyncio.wait_for(reader.read(8192), timeout=1.0)
                 if not chunk:
                     break
                 body += chunk
@@ -85,6 +85,9 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
             resp = await _read_http_response(reader)
             stats.requests += 1
             stats.bytes += len(resp)
+        except (asyncio.TimeoutError, ConnectionError, ssl.SSLError):
+            stats.errors += 1
+            break
         except Exception:
             stats.errors += 1
             break
@@ -108,6 +111,9 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
             resp = await _read_http_response(reader)
             stats.requests += 1
             stats.bytes += len(resp)
+        except (asyncio.TimeoutError, ConnectionError, ssl.SSLError):
+            stats.errors += 1
+            break
         except Exception:
             stats.errors += 1
             break
