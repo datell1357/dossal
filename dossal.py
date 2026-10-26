@@ -85,15 +85,15 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
             resp = await _read_http_response(reader)
             stats.requests += 1
             stats.bytes += len(resp)
-        except (asyncio.TimeoutError, ConnectionError, ssl.SSLError):
-            stats.errors += 1
-            break
         except Exception:
             stats.errors += 1
             break
+    # Force close: transport.close() immediately, skip graceful SSL shutdown
+    transport = writer.transport
+    if transport:
+        transport.close()
     try:
-        writer.close()
-        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
     except Exception:
         pass
 
@@ -112,15 +112,15 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
             resp = await _read_http_response(reader)
             stats.requests += 1
             stats.bytes += len(resp)
-        except (asyncio.TimeoutError, ConnectionError, ssl.SSLError):
-            stats.errors += 1
-            break
         except Exception:
             stats.errors += 1
             break
+    # Force close: transport.close() immediately, skip graceful SSL shutdown
+    transport = writer.transport
+    if transport:
+        transport.close()
     try:
-        writer.close()
-        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
     except Exception:
         pass
 
@@ -152,9 +152,12 @@ async def ws_worker(name, url, stats, duration, stop, payload_size=128):
         except Exception:
             stats.errors += 1
             break
+    # Force close
+    transport = writer.transport
+    if transport:
+        transport.close()
     try:
-        writer.close()
-        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
     except Exception:
         pass
 
@@ -169,9 +172,12 @@ async def tcp_worker(name, url, stats, duration, stop, payload_size=1024):
         except Exception:
             stats.errors += 1
             break
+    # Force close
+    transport = writer.transport
+    if transport:
+        transport.close()
     try:
-        writer.close()
-        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
     except Exception:
         pass
 
@@ -253,9 +259,12 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
     if error:
         import traceback
         print(f"h2_worker[{name}] error: {error}\n{traceback.format_exc()}", file=sys.stderr)
+    # Force close
+    transport = writer.transport
+    if transport:
+        transport.close()
     try:
-        writer.close()
-        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
     except Exception:
         pass
 
