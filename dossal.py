@@ -44,16 +44,45 @@ def parse_udp(u):
     p = urlparse(u)
     return p.hostname, int(p.port)
 
+async def _read_http_response(reader):
+    """Read a complete HTTP/1.1 response (headers + body)."""
+    # Read headers
+    header_data = b''
+    while b'\r\n\r\n' not in header_data:
+        chunk = await asyncio.wait_for(reader.read(1024), timeout=2.0)
+        if not chunk:
+            return b''
+        header_data += chunk
+    
+    # Parse content-length
+    header_end = header_data.find(b'\r\n\r\n')
+    headers_part = header_data[:header_end].decode('latin1')
+    body_start = header_end + 4
+    body = header_data[body_start:]
+    
+    for line in headers_part.split('\r\n'):
+        if line.lower().startswith('content-length:'):
+            content_length = int(line.split(':', 1)[1].strip())
+            while len(body) < content_length:
+                chunk = await asyncio.wait_for(reader.read(8192), timeout=2.0)
+                if not chunk:
+                    break
+                body += chunk
+            body = body[:content_length]
+            break
+    
+    return header_data[:body_start] + body
+
 async def http_worker(name, url, stats, duration, stop, payload_size=0):
     host, port, path = parse_http(url)
     reader, writer = await asyncio.open_connection(host, port)
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n"
-           f"User-Agent: dossal/0.3\r\n\r\n")
+           f"User-Agent: dossal/0.4\r\n\r\n")
     while not stop.is_set():
         try:
             writer.write(req.encode())
             await writer.drain()
-            resp = await asyncio.wait_for(reader.read(8192), timeout=1.0)
+            resp = await _read_http_response(reader)
             stats.requests += 1
             stats.bytes += len(resp)
         except Exception:
@@ -71,12 +100,12 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
     ctx.verify_mode = ssl.CERT_NONE
     reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n"
-           f"User-Agent: dossal/0.3\r\n\r\n")
+           f"User-Agent: dossal/0.4\r\n\r\n")
     while not stop.is_set():
         try:
             writer.write(req.encode())
             await writer.drain()
-            resp = await asyncio.wait_for(reader.read(8192), timeout=1.0)
+            resp = await _read_http_response(reader)
             stats.requests += 1
             stats.bytes += len(resp)
         except Exception:
