@@ -124,19 +124,20 @@ def handle_h2_event(conn, event, writer, peer):
         print(f"h2: RequestReceived on stream {stream_id}, path={path}", flush=True)
         if path == '/metrics':
             body = json.dumps({**vars(m), 'now': time.time(), 'per_ip_buckets': len(per_ip_buckets)}).encode()
-            conn.send_headers(stream_id, [(b':status', b'200'), (b'content-type', b'application/json'), (b'content-length', str(len(body)).encode())])
+            conn.send_headers(stream_id, [(b':status', b'200'), (b'content-type', b'application/json'), (b'content-length', str(len(body)).encode())], end_stream=False)
             conn.send_data(stream_id, body, end_stream=True)
         elif path == '/echo':
             body = b''
-            conn.send_headers(stream_id, [(b':status', b'200'), (b'content-type', b'application/octet-stream'), (b'content-length', b'0')])
+            conn.send_headers(stream_id, [(b':status', b'200'), (b'content-type', b'application/octet-stream'), (b'content-length', b'0')], end_stream=False)
             conn.send_data(stream_id, body, end_stream=True)
         else:
             body = b'cf-sim h2 ok'
-            conn.send_headers(stream_id, [(b':status', b'200'), (b'content-type', b'text/plain'), (b'content-length', str(len(body)).encode())])
+            conn.send_headers(stream_id, [(b':status', b'200'), (b'content-type', b'text/plain'), (b'content-length', str(len(body)).encode())], end_stream=False)
             conn.send_data(stream_id, body, end_stream=True)
         m.requests += 1
         m.received_bytes += 100
         m.sent_bytes += len(body)
+        print(f"h2: sent response for stream {stream_id}, data_to_send={len(conn.data_to_send())}", flush=True)
     else:
         print(f"h2: other event: {type(event).__name__}", flush=True)
 
