@@ -187,7 +187,6 @@ async def handle_h2(reader, writer, peer):
 def make_ssl_ctx(protocol):
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(str(CERT), str(KEY))
-    ctx.options |= ssl.OP_NO_DELAY  # Enable Nagle's algorithm off / TCP_NODELAY
     if protocol == 'h2':
         ctx.set_alpn_protocols(['h2'])
     else:
