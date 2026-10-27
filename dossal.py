@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v0.3 — comprehensive DoS stress engine
+dossal v0.5 — comprehensive DoS stress engine
 Modes:
   http      : HTTP/1.1 keep-alive request flood (plain)
   https     : TLS request flood (HTTP/1.1, self-signed cert)
@@ -22,7 +22,7 @@ class Stats:
     def bps(self, dur): return self.bytes/dur if dur else 0
     def report(self, mode,url,conns,dur):
         return {
-          "tool":"dossal","version":"0.3","mode":mode,"url":url,"connections":conns,"duration_s":dur,
+          "tool":"dossal","version":"0.5","mode":mode,"url":url,"connections":conns,"duration_s":dur,
           "requests":self.requests,"rps":round(self.rps(dur),2),
           "bytes":self.bytes,"bps":round(self.bps(dur),2),
           "errors":self.errors
@@ -77,32 +77,19 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
     host, port, path = parse_http(url)
     reader, writer = await asyncio.open_connection(host, port)
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n"
-           f"User-Agent: dossal/0.4\r\n\r\n")
+           f"User-Agent: dossal/0.5\r\n\r\n")
     req_bytes = req.encode()
-    
-    async def writer_loop():
-        while not stop.is_set():
-            try:
-                writer.write(req_bytes)
-                await writer.drain()
-            except Exception:
-                break
-    
-    async def reader_loop():
-        while not stop.is_set():
-            try:
-                resp = await _read_http_response(reader)
-                stats.requests += 1
-                stats.bytes += len(resp)
-            except Exception:
-                stats.errors += 1
-                break
-    
-    # Start writer task, then immediately run reader
-    write_task = asyncio.create_task(writer_loop())
-    await reader_loop()
-    stop.set()
-    write_task.cancel()
+    # Single-loop: write request, read response, repeat (no drain, no backpressure)
+    while not stop.is_set():
+        try:
+            writer.write(req_bytes)
+            resp = await _read_http_response(reader)
+            stats.requests += 1
+            stats.bytes += len(resp)
+        except Exception:
+            stats.errors += 1
+            break
+    # Force close
     if writer.transport:
         writer.transport.close()
     try:
@@ -117,31 +104,18 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
     ctx.verify_mode = ssl.CERT_NONE
     reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n"
-           f"User-Agent: dossal/0.4\r\n\r\n")
+           f"User-Agent: dossal/0.5\r\n\r\n")
     req_bytes = req.encode()
-    
-    async def writer_loop():
-        while not stop.is_set():
-            try:
-                writer.write(req_bytes)
-                await writer.drain()
-            except Exception:
-                break
-    
-    async def reader_loop():
-        while not stop.is_set():
-            try:
-                resp = await _read_http_response(reader)
-                stats.requests += 1
-                stats.bytes += len(resp)
-            except Exception:
-                stats.errors += 1
-                break
-    
-    write_task = asyncio.create_task(writer_loop())
-    await reader_loop()
-    stop.set()
-    write_task.cancel()
+    # Single-loop: write request, read response, repeat (no drain, no backpressure)
+    while not stop.is_set():
+        try:
+            writer.write(req_bytes)
+            resp = await _read_http_response(reader)
+            stats.requests += 1
+            stats.bytes += len(resp)
+        except Exception:
+            stats.errors += 1
+            break
     # Force close
     if writer.transport:
         writer.transport.close()
@@ -282,7 +256,7 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
             stats.errors += 1
             error = e
             break
-    if error:
+    if error and name == 0:
         import traceback
         print(f"h2_worker[{name}] error: {error}\n{traceback.format_exc()}", file=sys.stderr)
     # Force close

@@ -120,7 +120,6 @@ def handle_h2_event(conn, event, writer, peer):
         headers = dict(event.headers)
         path = headers.get(':path', '/')
         stream_id = event.stream_id
-        print(f"h2: RequestReceived on stream {stream_id}, path={path}", flush=True)
         if path == '/metrics':
             body = json.dumps({**vars(m), 'now': time.time(), 'per_ip_buckets': len(per_ip_buckets)}).encode()
             conn.send_headers(stream_id, [(b':status', b'200'), (b'content-type', b'application/json'), (b'content-length', str(len(body)).encode())], end_stream=False)
@@ -138,7 +137,7 @@ def handle_h2_event(conn, event, writer, peer):
         m.sent_bytes += len(body)
         # Do NOT send here - the main loop will handle it
     else:
-        print(f"h2: other event: {type(event).__name__}", flush=True)
+        pass
 
 async def handle_h2(reader, writer, peer):
     config = H2Configuration(client_side=False)
@@ -146,24 +145,20 @@ async def handle_h2(reader, writer, peer):
     conn.initiate_connection()
     # Send initial SETTINGS and wait for client SETTINGS before reading requests
     initial = conn.data_to_send()
-    print(f"h2: sending initial SETTINGS ({len(initial)} bytes) to {peer}", flush=True)
     writer.write(initial)
     await writer.drain()
     
     # Wait for client's SETTINGS frame
-    print(f"h2: waiting for client SETTINGS from {peer}", flush=True)
     try:
         client_data = await asyncio.wait_for(reader.read(1024), timeout=5.0)
-        print(f"h2: received {len(client_data)} bytes from client", flush=True)
         conn.receive_data(client_data)
         # ACK client SETTINGS
         if conn.data_to_send():
             ack = conn.data_to_send()
-            print(f"h2: sending ACK ({len(ack)} bytes) to {peer}", flush=True)
             writer.write(ack)
             await writer.drain()
     except asyncio.TimeoutError:
-        print(f"h2: timeout waiting for client SETTINGS from {peer}", flush=True)
+        pass
     
     # Set TCP_NODELAY to disable Nagle's algorithm for lower latency
     sock = writer.transport.get_extra_info('socket')
@@ -173,7 +168,6 @@ async def handle_h2(reader, writer, peer):
     
     m.active += 1
     m.peak_concurrent = max(m.peak_concurrent, m.active)
-    print(f"h2: connection ready from {peer}", flush=True)
     try:
         while True:
             data = await asyncio.wait_for(reader.read(65535), timeout=5.0)
@@ -187,17 +181,14 @@ async def handle_h2(reader, writer, peer):
                 # Then send all pending data at once
                 out = conn.data_to_send()
                 if out:
-                    print(f"h2: sending {len(out)} bytes to {peer}", flush=True)
                     writer.write(out)
                     await writer.drain()
-            except ProtocolError as e:
-                print(f"h2: ProtocolError from {peer}: {e}", flush=True)
+            except ProtocolError:
                 break
     except (asyncio.TimeoutError, ConnectionError):
         pass
     finally:
         m.active -= 1
-        print(f"h2: connection closed {peer}", flush=True)
         try:
             writer.close(); await writer.wait_closed()
         except Exception:
