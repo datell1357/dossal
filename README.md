@@ -1,41 +1,38 @@
 # dossal — comprehensive DoS lab
 
 ## Status
-- dossal v0.4 (Python asyncio) implemented with http, https, websocket, tcp, udp, h2 modes.
-- Local targets:
-  - node-victim on port 8080 (HTTP/1.1)
-  - py-victim on port 8081 (HTTP/1.1, single-threaded)
-  - cf-sim on port 8443 (HTTP/1.1 TLS edge simulator) and 8444 (HTTP/2 edge simulator)
-- No real/public server tests performed.
+- dossal v0.5 (Python asyncio) with http, https, websocket, tcp, udp, h2 modes.
+- cf-sim v0.8 (Cloudflare-like edge simulator) with rate limiting, metrics, h1/h2.
+- Local targets only — no real/public server tests.
+  - node-victim on port 8080 (HTTP/1.1, Node.js)
+  - py-victim on port 8081 (HTTP/1.1, Python)
+  - cf-sim on port 8443 (HTTP/1.1 TLS) and 8444 (HTTP/2)
 
-## Test results (local only)
-| Target | Mode | Connections | Duration | Requests | RPS | Bytes | Errors | Notes |
-|---|---|---:|---:|---:|---:|---:|---:|---|
-| node-victim:8080 | http | 20 | 5s | 60,362 | 12,072 | 46.0 MB | 13 | split reader/writer |
-| node-victim:8080 | http | 20 | 5s | 606,270 | 121,254 | 86.7 MB | 0 | old single-loop |
-| cf-sim:8443 | https | 20 | 5s | 95,748 | 19,150 | 15.0 MB | 3 | rate limited by cf-sim |
-| cf-sim:8444 | h2 | 10 | 5s | 47,850 | 9,570 | 1.6 MB | 0 | h2 fixed |
-| cf-sim:8444 | h2 | 20 | 10s | 105,524 | 10,552 | 3.5 MB | 0 | h2 stable |
-| cf-sim:8444 | h2 | 50 | 10s | 113,806 | 11,381 | 3.8 MB | 0 | h2 scaled |
+## Test results (local only, v0.5)
+| Target | Mode | Conns | Dur | Requests | RPS | MB | Errors |
+|---|---|---:|---:|---:|---:|---:|---:|
+| node-victim:8080 | http | 20 | 5s | 259,284 | 51,857 | 37.1 | 0 |
+| cf-sim:8443 | https | 20 | 5s | 113,278 | 22,656 | 56.3 | 19 |
+| cf-sim:8444 | h2 | 50 | 10s | 131,676 | 13,168 | 4.3 | 0 |
 
-cf-sim h1 edge metrics (cumulative):
+cf-sim edge metrics (cumulative, after all tests):
 ```json
-{"requests": 169847, "received_bytes": 11581287, "sent_bytes": 1845024, "limited": 15091303, "peak_concurrent": 20, "per_ip_buckets": 216}
+{"requests": 140631, "limited": 1653353, "peak_concurrent": 50, "per_ip_buckets": 21}
 ```
+- 1.65M requests rate-limited (429) by cf-sim token bucket → Cloudflare-like shedding confirmed.
+- h2: 131k requests processed, 0 errors → stable multiplexed load.
 
-## Key fixes in v0.4
-- **H2 mode**: proper handshake (wait for server SETTINGS before sending requests), ALPN negotiation, TCP_NODELAY
-- **HTTPS mode**: split reader/writer loops to avoid SSL shutdown deadlock, force-close transport
-- **HTTP/1.1**: proper Content-Length based response reading (no more partial reads)
-- **cf-sim**: separate h1/h2 listeners with ALPN, proper h2 SETTINGS handshake
+## v0.5 changes
+- **http/https workers**: reverted to single-loop (write → read → repeat, no drain) for max throughput.
+- **h2 worker**: removed debug prints; kept explicit server-SETTINGS wait before first request.
+- **cf-sim**: removed per-event debug prints (was a major h2 throughput bottleneck); 429 responses have no Content-Length/body.
 
 ## Tool vs commercial tools
-See `reports/comparison.md` for a qualitative comparison. dossal's differentiator: single-file, local-first, WebSocket + TCP + HTTPS + UDP + HTTP/2 in one CLI, JSON output, and easy extension to SYN.
+See `reports/comparison.md`. dossal: single-file, local-first, 6 protocol modes, JSON output, extensible.
 
-## Next steps
-1. Add SYN/ACK mode using raw sockets (requires privileged port).
-2. Optimize http_worker performance (split reader/writer slower than single-loop for plain HTTP).
-3. Add per-victim CPU/memory sampling to produce an impact score.
-4. Build a CLI dashboard to run all modes in parallel with live metrics.
-5. Add connection-limit handling and reconnection logic.
-6. Create a `--target-impact` mode that reports victim health before/after.
+## Next
+1. SYN/ACK mode (raw sockets, `--mode syn`)
+2. Victim impact score (CPU/memory sampling)
+3. Multi-mode parallel dashboard
+4. gRPC/QUIC modes
+5. Connection-pool reconnection logic
