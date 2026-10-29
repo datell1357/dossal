@@ -22,7 +22,7 @@ async def main():
     
     while True:
         try:
-            data, addr = await loop.sock_recv(sock, 65535)
+            data = await loop.sock_recv(sock, 65535)
             packets += 1
             # Process the packet (CPU work to simulate QUIC handshake)
             if packets % 1000 == 0:
