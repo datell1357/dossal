@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "2.4"
+VERSION = "2.5"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -98,8 +98,9 @@ class Stats:
 
 # ── URL parsers ───────────────────────────────────────────────────
 def parse_http(u):
+    host, port = _host_port(u)
     p = urlparse(u)
-    return p.hostname, p.port or (443 if p.scheme == "https" else 80), p.path or "/"
+    return host, port, p.path or "/"
 
 def _host_port(u):
     """Extract (host, port) from any URL scheme. Robust to http/https/udp/tcp/etc."""
