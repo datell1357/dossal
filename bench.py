@@ -17,15 +17,15 @@ DOSSAL = os.path.join(LAB, 'dossal.py')
 
 # Mode configs: (mode, url, connections, duration)
 TESTS = [
-    ('http',      'http://127.0.0.1:8080',     20, 3),
-    ('https',     'https://127.0.0.1:8443',    20, 3),
-    ('h2',        'https://127.0.0.1:8444',    20, 3),
-    ('grpc',      'https://127.0.0.1:50051/',   5, 3),
-    ('quic',      'udp://127.0.0.1:4443',      10, 3),
-    ('udp',       'udp://127.0.0.1:9999',      10, 3),
-    ('syn',       'tcp://127.0.0.1:8080',      10, 3),
-    ('rst',       'tcp://127.0.0.1:8080',      10, 3),
-    ('slowloris', 'http://127.0.0.1:8080',     10, 3),
+    ('http',      'http://127.0.0.1:8080',     20, 2),
+    ('https',     'https://127.0.0.1:8443',    20, 2),
+    ('h2',        'https://127.0.0.1:8444',    20, 2),
+    ('grpc',      'https://127.0.0.1:50051/',   5, 2),
+    ('quic',      'udp://127.0.0.1:4443',      10, 2),
+    ('udp',       'udp://127.0.0.1:9999',      10, 2),
+    ('syn',       'tcp://127.0.0.1:8080',      10, 2),
+    ('rst',       'tcp://127.0.0.1:8080',      10, 2),
+    ('slowloris', 'http://127.0.0.1:8080',     10, 2),
 ]
 
 def run_mode(mode, url, conns, dur):
@@ -55,9 +55,9 @@ def main():
 
     # Impact score: attack heavy-victim with http, measure
     impact_cmd = [PY, DOSSAL, '--mode', 'http', '--url', 'http://127.0.0.1:8082',
-                  '--connections', '20', '--duration', '5', '--impact']
+                  '--connections', '20', '--duration', '3', '--impact']
     try:
-        r = subprocess.run(impact_cmd, capture_output=True, text=True, timeout=60)
+        r = subprocess.run(impact_cmd, capture_output=True, text=True, timeout=30)
         out = r.stdout.strip()
         js = out[out.find('{'):]
         impact_data = json.loads(js)

