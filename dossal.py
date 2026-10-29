@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "2.2"
+VERSION = "2.3"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -101,30 +101,33 @@ def parse_http(u):
     p = urlparse(u)
     return p.hostname, p.port or (443 if p.scheme == "https" else 80), p.path or "/"
 
-def parse_ws(u):
+def _host_port(u):
+    """Extract (host, port) from any URL scheme. Robust to http/https/udp/tcp/etc."""
+    if '://' not in u:
+        # Bare host:port
+        parts = u.rsplit(':', 1)
+        if len(parts) == 2:
+            return parts[0], int(parts[1])
+        return u, 80
     p = urlparse(u)
-    return p.hostname, p.port or 80, p.path or "/"
+    port = p.port
+    if port is None:
+        port = 443 if p.scheme == 'https' else 80
+    return p.hostname or '127.0.0.1', int(port)
+
+def parse_http(u):
+    host, port = _host_port(u)
+    p = urlparse(u)
+    return host, port, p.path or '/'
 
 def parse_tcp(u):
-    p = urlparse(u)
-    return p.hostname, int(p.port)
+    return _host_port(u)
 
 def parse_udp(u):
-    p = urlparse(u)
-    if not p.scheme or p.scheme == 'http':
-        # Convert http://host:port to udp://host:port
-        p = urlparse(u.replace('http://', 'udp://', 1))
-    elif p.scheme == 'https':
-        p = urlparse(u.replace('https://', 'udp://', 1))
-    return p.hostname, int(p.port)
+    return _host_port(u)
 
 def parse_ip_port(u):
-    """Parse ip:port or host:port for raw modes. Handles http/https URLs."""
-    p = urlparse(u)
-    if not p.scheme or p.scheme in ('http', 'https'):
-        scheme = 'tcp' if p.scheme in ('http', 'https') else 'tcp'
-        p = urlparse(f"{scheme}://{u.split('://')[-1] if '://' in u else u}")
-    return p.hostname, int(p.port)
+    return _host_port(u)
 
 # ── HTTP response reader ──────────────────────────────────────────
 async def _read_http_response(reader):
