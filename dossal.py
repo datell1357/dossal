@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "1.8"
+VERSION = "1.9"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -636,7 +636,7 @@ class CpuSampler:
             return sum(self.samples) / len(self.samples)
         return 0.0
 
-async def impact_score(url, stats, duration, sampler=None):
+async def impact_score(url, stats, duration, sampler=None, base_cpu=0.0):
     """Compute victim impact score. All psutil calls in executor."""
     loop = asyncio.get_event_loop()
     host, port = parse_ip_port(url)
@@ -668,10 +668,12 @@ async def impact_score(url, stats, duration, sampler=None):
     mem_bytes = await loop.run_in_executor(None, _sample, victim_pid)
 
     rps = stats.rps(duration)
-    # CPU: use background sampler
+    # CPU: use background sampler, subtract baseline
     if sampler:
-        cpu = await sampler.stop()
+        cpu_raw = await sampler.stop()
+        cpu = max(0.0, cpu_raw - base_cpu)
     else:
+        base_cpu = 0.0
         # Fallback: quick sample
         def _cpu():
             import psutil
@@ -766,10 +768,20 @@ def main():
 
     async def _run_all():
         sampler = None
+        baseline_cpu = 0.0
         if args.impact:
             host, port = parse_ip_port(args.url)
             victim_pid = await _find_pid(port)
             if victim_pid:
+                # Pre-attack baseline
+                import psutil
+                try:
+                    _p = psutil.Process(victim_pid)
+                    _p.cpu_percent(None)
+                    await asyncio.sleep(0.5)
+                    baseline_cpu = _p.cpu_percent(None)
+                except Exception:
+                    baseline_cpu = 0.0
                 sampler = CpuSampler(victim_pid)
                 await sampler.start()
 
@@ -802,7 +814,7 @@ def main():
             live_task.cancel()
         report = stats.report(modes, args.url, args.connections, args.duration)
         if args.impact:
-            report["impact"] = await impact_score(args.url, stats, args.duration, sampler)
+            report["impact"] = await impact_score(args.url, stats, args.duration, sampler, baseline_cpu)
         return report
 
     report = asyncio.run(_run_all())
