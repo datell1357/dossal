@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "1.0"
+VERSION = "1.2"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -733,6 +733,11 @@ def main():
         help="Override default payload size (per mode)")
     ap.add_argument("--impact", action="store_true",
         help="Enable victim impact scoring (requires psutil)")
+    ap.add_argument("--intensity", default="balanced",
+        choices=["light", "balanced", "max"],
+        help="Preset: light(10c), balanced(50c), max(200c). Overrides default 100c.")
+    ap.add_argument("--live", action="store_true",
+        help="Print RPS/PPS every second during attack")
     args = ap.parse_args()
 
     modes = [m.strip() for m in args.mode.split(",")]
@@ -740,6 +745,11 @@ def main():
         if m not in WORKERS:
             print(f"Unknown mode: {m}. Available: {', '.join(WORKERS.keys())}", file=sys.stderr)
             sys.exit(1)
+
+    # Intensity preset: overrides default 100 connections
+    _INTENSITY = {"light": 10, "balanced": 50, "max": 200}
+    if args.connections == 100:
+        args.connections = _INTENSITY.get(args.intensity, 50)
 
     stats = Stats()
     payload_size = args.payload_size
@@ -752,7 +762,34 @@ def main():
             if victim_pid:
                 sampler = CpuSampler(victim_pid)
                 await sampler.start()
+
+        live_task = None
+        if args.live:
+            _live_start = None
+            async def _live_printer():
+                nonlocal _live_start
+                _live_start = asyncio.get_event_loop().time()
+                last_req, last_pkt = 0, 0
+                last_t = asyncio.get_event_loop().time()
+                while True:
+                    await asyncio.sleep(1)
+                    now = asyncio.get_event_loop().time()
+                    dt = now - last_t
+                    rps = (stats.requests - last_req) / dt
+                    pps = (stats.packets - last_pkt) / dt
+                    elapsed = now - _live_start
+                    remaining = max(0, args.duration - int(elapsed))
+                    parts = [f"[{remaining}s] RPS={rps:,.0f}"]
+                    if stats.packets: parts.append(f"PPS={pps:,.0f}")
+                    if stats.conns: parts.append(f"CONNS={stats.conns}")
+                    parts.append(f"ERR={stats.errors}")
+                    print("  " + "  ".join(parts), flush=True)
+                    last_req, last_pkt, last_t = stats.requests, stats.packets, now
+            live_task = asyncio.create_task(_live_printer())
+
         await run(modes, args.url, args.connections, args.duration, stats, payload_size)
+        if live_task:
+            live_task.cancel()
         report = stats.report(modes, args.url, args.connections, args.duration)
         if args.impact:
             report["impact"] = await impact_score(args.url, stats, args.duration, sampler)
