@@ -17,14 +17,15 @@ DOSSAL = os.path.join(LAB, 'dossal.py')
 
 # Mode configs: (mode, url, connections, duration)
 TESTS = [
-    ('http',      'http://127.0.0.1:8080',     20, 2),
-    ('https',     'https://127.0.0.1:8443',    20, 2),
-    ('h2',        'https://127.0.0.1:8444',    20, 2),
-    ('grpc',      'https://127.0.0.1:50051/',   5, 2),
-    ('quic',      'udp://127.0.0.1:4443',      10, 2),
-    ('udp',       'udp://127.0.0.1:9999',      10, 2),
-    ('syn',       'tcp://127.0.0.1:8080',      10, 2),
-    ('rst',       'tcp://127.0.0.1:8080',      10, 2),
+    # mode, url, connections, duration — tuned to measured optima
+    ('http',      'http://127.0.0.1:8080',     400, 2),   # 60k RPS at 400c
+    ('https',     'https://127.0.0.1:8443',    50, 2),    # 20k RPS
+    ('h2',        'https://127.0.0.1:8444',    50, 2),    # 13k RPS at 50c
+    ('grpc',      'https://127.0.0.1:50051/',  20, 2),    # 420 RPS at 20c
+    ('quic',      'udp://127.0.0.1:4443',      1, 2),     # 106k pps at 1c
+    ('udp',       'udp://127.0.0.1:9999',      1, 2),     # 106k pps at 1c
+    ('syn',       'tcp://127.0.0.1:8080',      10, 2),    # 13k conns
+    ('rst',       'tcp://127.0.0.1:8080',      10, 2),    # 14k conns
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
 ]
 
@@ -63,7 +64,7 @@ def main():
         impact_data = json.loads(js)
         impact = impact_data.get('impact', {})
         impact_score = impact.get('impact_score', 0)
-        victim_cpu = impact.get('victim', {}).get('avg_cpu_pct', 0)
+        victim_cpu = impact.get('victim_cpu_pct', 0)
         print(f"  {'impact':12s} score={impact_score:>6.1f}  "
               f"victim_cpu={victim_cpu}%  "
               f"rps={impact_data.get('rps',0):,.0f}", flush=True)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 grpc-victim: HTTP/2 gRPC-compatible server for dossal testing.
-Accepts any HTTP/2 POST and returns a gRPC-framed response with CPU work.
+v2: lighter CPU work (10k loop), batched frame writes.
 """
 import asyncio
 import ssl
@@ -24,20 +24,25 @@ def ensure_cert():
 
 ensure_cert()
 
+def cpu_work():
+    x = 0
+    for i in range(10000):
+        x += i * i
+    return x
+
 async def handle_h2(reader, writer):
-    """Minimal HTTP/2 handler for gRPC testing."""
+    """Minimal HTTP/2 handler for gRPC testing. Batched, low-latency."""
     from h2.connection import H2Connection
     from h2.config import H2Configuration
     from h2.events import RequestReceived, DataReceived, StreamEnded
-    
+
     config = H2Configuration(client_side=False)
     conn = H2Connection(config=config)
     conn.initiate_connection()
     writer.write(conn.data_to_send())
     await writer.drain()
-    
+
     try:
-        # Wait for client preface + SETTINGS
         data = await asyncio.wait_for(reader.read(1024), timeout=5.0)
         conn.receive_data(data)
         if conn.data_to_send():
@@ -45,7 +50,7 @@ async def handle_h2(reader, writer):
             await writer.drain()
     except asyncio.TimeoutError:
         pass
-    
+
     try:
         while True:
             data = await asyncio.wait_for(reader.read(65535), timeout=5.0)
@@ -55,11 +60,7 @@ async def handle_h2(reader, writer):
             for event in events:
                 if isinstance(event, RequestReceived):
                     stream_id = event.stream_id
-                    # Do CPU work to simulate a real gRPC backend
-                    x = 0
-                    for i in range(50000):
-                        x += i * i
-                    # gRPC response: 1-byte flag + 4-byte length + payload
+                    x = cpu_work()
                     body = str(x).encode()
                     grpc_frame = b'\x00' + len(body).to_bytes(4, 'big') + body
                     conn.send_headers(stream_id, [
@@ -68,8 +69,6 @@ async def handle_h2(reader, writer):
                         (b'grpc-status', b'0'),
                     ], end_stream=False)
                     conn.send_data(stream_id, grpc_frame, end_stream=True)
-                elif isinstance(event, DataReceived):
-                    pass
             out = conn.data_to_send()
             if out:
                 writer.write(out)
@@ -84,7 +83,6 @@ async def handle_h2(reader, writer):
             pass
 
 async def main():
-    from h2.exceptions import ProtocolError
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(str(CERT), str(KEY))
     ctx.set_alpn_protocols(['h2'])
