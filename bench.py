@@ -57,7 +57,7 @@ def main():
     impact_cmd = [PY, DOSSAL, '--mode', 'http', '--url', 'http://127.0.0.1:8082',
                   '--connections', '20', '--duration', '5', '--impact']
     try:
-        r = subprocess.run(impact_cmd, capture_output=True, text=True, timeout=30)
+        r = subprocess.run(impact_cmd, capture_output=True, text=True, timeout=60)
         out = r.stdout.strip()
         js = out[out.find('{'):]
         impact_data = json.loads(js)

