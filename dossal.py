@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "2.3"
+VERSION = "2.4"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -104,7 +104,6 @@ def parse_http(u):
 def _host_port(u):
     """Extract (host, port) from any URL scheme. Robust to http/https/udp/tcp/etc."""
     if '://' not in u:
-        # Bare host:port
         parts = u.rsplit(':', 1)
         if len(parts) == 2:
             return parts[0], int(parts[1])
@@ -112,7 +111,8 @@ def _host_port(u):
     p = urlparse(u)
     port = p.port
     if port is None:
-        port = 443 if p.scheme == 'https' else 80
+        # No port in URL: use scheme default
+        port = 443 if p.scheme in ('https', 'wss') else 80
     return p.hostname or '127.0.0.1', int(port)
 
 def parse_http(u):
@@ -855,7 +855,7 @@ def main():
             sys.exit(1)
 
     # Intensity preset: overrides default 100 connections
-    _INTENSITY = {"light": 10, "balanced": 50, "max": 200}
+    _INTENSITY = {"light": 10, "balanced": 50, "max": 400}
     if args.connections == 100:
         args.connections = _INTENSITY.get(args.intensity, 50)
 
