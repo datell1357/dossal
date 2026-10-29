@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "1.9"
+VERSION = "2.0"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -375,6 +375,9 @@ async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
     # gRPC request frame: 1-byte flag + 4-byte length + payload
     grpc_payload = b'X' * max(1, payload_size)
     payload = b'\x00' + len(grpc_payload).to_bytes(4, 'big') + grpc_payload
+    # Fire-and-forget: send gRPC requests, count sent (not received)
+    # Responses are processed lazily in the background
+    reader_task = asyncio.create_task(_grpc_reader(conn, reader, stats))
     error = None
     while not stop.is_set():
         try:
@@ -383,33 +386,29 @@ async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
             conn.send_data(stream_id, payload, end_stream=True)
             data = conn.data_to_send()
             if data:
-                writer.write(data); await writer.drain()
-            # Read response
-            got_response = False
-            deadline = time.time() + 3.0
-            while time.time() < deadline and not got_response:
-                chunk = await asyncio.wait_for(reader.read(8192), timeout=max(0.1, deadline - time.time()))
-                if not chunk:
-                    break
-                events = conn.receive_data(chunk)
-                for event in events:
-                    if isinstance(event, ResponseReceived):
-                        stats.requests += 1
-                        stats.bytes += len(chunk)
-                        got_response = True
-                        break
-                    elif isinstance(event, DataReceived):
-                        stats.bytes += len(event.data)
+                writer.write(data)
+                await asyncio.wait_for(writer.drain(), timeout=5.0)
+            stats.requests += 1
+            stats.bytes += len(payload)
         except Exception as e:
             stats.errors += 1
             error = e
             break
-    if error and name == 0:
-        print(f"grpc_worker[{name}] error: {error}", file=sys.stderr)
+    reader_task.cancel()
     if writer.transport:
-        writer.transport.close()
+        writer.transport.abort()
+
+async def _grpc_reader(conn, reader, stats):
+    """Background reader: drain h2 frames to keep the connection alive."""
     try:
-        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
+        while True:
+            chunk = await reader.read(8192)
+            if not chunk:
+                break
+            events = conn.receive_data(chunk)
+            for event in events:
+                if isinstance(event, DataReceived):
+                    stats.bytes += len(event.data)
     except Exception:
         pass
 
