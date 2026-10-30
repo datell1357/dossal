@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.2"
+VERSION = "3.3"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -808,6 +808,8 @@ def auto_probe(url):
         except Exception:
             pass
 
+    # Deduplicate recommended, preserving order
+    results['recommended'] = list(dict.fromkeys(results['recommended']))
     # If h2 is recommended, remove duplicate http/https (h2 covers both)
     if 'h2' in results['recommended']:
         results['recommended'] = [m for m in results['recommended'] if m not in ('http', 'https')]
