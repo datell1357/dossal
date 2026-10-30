@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "2.5"
+VERSION = "2.8"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -318,42 +318,40 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
         (':path', path),
         ('user-agent', f'dossal/{VERSION}'),
     ]
+    # Batched h2: send N requests, then drain responses
+    BATCH = 32
     error = None
     while not stop.is_set():
         try:
-            stream_id = conn.get_next_available_stream_id()
-            conn.send_headers(stream_id, headers, end_stream=True)
+            for _ in range(BATCH):
+                if stop.is_set():
+                    break
+                stream_id = conn.get_next_available_stream_id()
+                conn.send_headers(stream_id, headers, end_stream=True)
             data = conn.data_to_send()
             if data:
-                writer.write(data); await writer.drain()
-            got_response = False
-            deadline = time.time() + 2.0
-            while time.time() < deadline and not got_response:
-                chunk = await asyncio.wait_for(reader.read(8192), timeout=max(0.1, deadline - time.time()))
+                writer.write(data)
+                await asyncio.wait_for(writer.drain(), timeout=5.0)
+            stats.requests += BATCH
+            # Drain available responses (non-blocking read)
+            deadline = time.time() + 1.0
+            while time.time() < deadline:
+                try:
+                    chunk = await asyncio.wait_for(reader.read(65535), timeout=0.05)
+                except asyncio.TimeoutError:
+                    break
                 if not chunk:
                     break
                 events = conn.receive_data(chunk)
                 for event in events:
-                    if isinstance(event, ResponseReceived):
-                        stats.requests += 1
-                        stats.bytes += len(chunk)
-                        got_response = True
-                        break
-                    elif isinstance(event, DataReceived):
+                    if isinstance(event, DataReceived):
                         stats.bytes += len(event.data)
         except Exception as e:
             stats.errors += 1
             error = e
             break
-    if error and name == 0:
-        import traceback
-        print(f"h2_worker[{name}] error: {error}", file=sys.stderr)
     if writer.transport:
-        writer.transport.close()
-    try:
-        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
-    except Exception:
-        pass
+        writer.transport.abort()
 
 # ── gRPC worker: HTTP/2 + gRPC framing ──────────────────────────
 async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
