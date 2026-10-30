@@ -1,7 +1,7 @@
 # dossal — comprehensive DoS stress engine
 
 ## Status
-- **dossal v2.0** (Python asyncio) — 13 attack modes, multi-mode, impact scoring, intensity presets, live stats.
+- **dossal v2.9** (Python asyncio) — 13 attack modes, multi-mode, auto mode, per-mode connections, impact scoring, live stats.
 - **cf-sim v0.8** (Cloudflare-like edge simulator) — rate limiting, metrics, h1/h2.
 - Local targets only — no real/public server tests.
 
@@ -40,13 +40,14 @@ Options:
   --url URL            Target URL (required)
   --mode MODES         Comma-separated modes (default: http)
   --connections N      Connections per mode (default: 100)
+  --conns "m=N,..."    Per-mode connections: "http=400,h2=80,udp=1,syn=10"
   --duration N         Attack duration in seconds (default: 10)
   --payload-size N     Override default payload size
   --impact             Enable victim impact scoring (requires psutil)
-  --intensity {light,balanced,max}  Preset: light(10c), balanced(50c), max(200c)
+  --intensity {light,balanced,max}  Preset: light(10c), balanced(50c), max(400c)
   --live               Print RPS/PPS every second during attack
   --threads N          Override connections for UDP/QUIC modes
-  --payload-size N     Override default payload size
+  --auto               Auto-detect protocol + include L4 modes
 ```
 
 ## Attack modes (13)
@@ -54,8 +55,8 @@ Options:
 |---|---|---|---:|
 | `http` | L7 | HTTP/1.1 keep-alive flood | **60,742 RPS** (400c) |
 | `https` | L7 | TLS 1.3 keep-alive flood | **20,676 RPS** |
-| `h2` | L7 | HTTP/2 multiplexed flood | **13,120 RPS** (50c) |
-| `grpc` | L7 | gRPC (HTTP/2 + framing) flood | **630 RPS** (20c, CPU-heavy) |
+| `h2` | L7 | HTTP/2 multiplexed flood (BATCH=32) | **30,288 RPS** (80c) |
+| `grpc` | L7 | gRPC (HTTP/2 + framing) flood | **1,050 RPS** (50c) |
 | `quic` | L4 | QUIC/HTTP3 UDP datagram flood | **106,000 pps** (1c) |
 | `udp` | L4 | Raw UDP datagram flood | **106,000 pps** (1c) |
 | `tcp` | L4 | Raw TCP byte flood | backpressure-limited |
@@ -66,10 +67,20 @@ Options:
 | `slowloris` | L7 | Slow HTTP header drip | connection holding |
 | `synack` | L4 | TCP connect + RST (ACK flood) | 461 conns/2s |
 
-## Multi-mode
+## Multi-mode (per-mode connections)
 ```bash
-# HTTP + QUIC + UDP: 14k RPS + 23k PPS (20c, 2s)
-python3 dossal.py --mode http,quic,udp --url http://target:8080 --connections 20 --duration 5 --live
+# HTTP + H2 + QUIC + UDP + SYN with tuned connections
+python3 dossal.py --mode http,h2,quic,udp,syn --url http://target:8080 \
+  --conns "http=400,h2=80,quic=1,udp=1,syn=10" --duration 30 --live
+# Result: 13,190 RPS + 20,823 PPS + 1,983 conns (3s, 0 errors)
+```
+
+## Auto mode
+```bash
+# Auto-detect protocol, include L4 modes for maximum impact
+python3 dossal.py --auto --url http://target:8080 --duration 30 --live
+# Detects: HTTP/1.1 → runs http + udp + syn
+# Detects: HTTPS/H2 → runs https + h2 + udp + syn
 ```
 
 ## Intensity presets
@@ -114,31 +125,39 @@ dossal.py (single file, Python asyncio)
 - **UDP/QUIC**: batch sendto in thread executor (2000 packets/batch)
 - **gRPC**: fire-and-forget streams, background h2 reader
 - **SYN/RST/FIN**: raw socket (no asyncio overhead), SO_LINGER for RST
-- **H2**: h2 library, multiplexed streams per connection
+- **H2**: h2 library, batched send (BATCH=32), background drain
+- **gRPC**: fire-and-forget streams, background h2 reader (BATCH=10)
 
-## Bench results (v2.0, local only)
+## Bench results (v2.9, local only)
 | Mode | Target | Conns | Dur | Result | Errors |
 |---|---|---|---|---|---|
-| http | node:8080 | 20 | 2s | 45,298 RPS | 0 |
-| https | cf-sim:8443 | 20 | 2s | 19,646 RPS | 2 |
-| h2 | cf-sim:8444 | 20 | 2s | 11,971 RPS | 0 |
-| grpc | grpc:50051 | 5 | 2s | 158 RPS | 5 |
-| quic | quic:4443 | 1 | 2s | 294,736 pkts | 0 |
-| udp | udp:9999 | 1 | 2s | 210,278 pkts | 0 |
-| syn | node:8080 | 10 | 2s | 10,532 conns | 0 |
-| rst | node:8080 | 10 | 2s | 12,215 conns | 0 |
+| http | node:8080 | 400 | 2s | 59,256 RPS | 0 |
+| https | cf-sim:8443 | 50 | 2s | 18,640 RPS | 0 |
+| h2 | cf-sim:8444 | 80 | 2s | 29,344 RPS | 0 |
+| grpc | grpc:50051 | 20 | 2s | 630 RPS | 20 |
+| quic | quic:4443 | 1 | 2s | 219,291 pkts | 0 |
+| udp | udp:9999 | 1 | 2s | 210,091 pkts | 0 |
+| syn | node:8080 | 10 | 2s | 11,172 conns | 0 |
+| rst | node:8080 | 10 | 2s | 12,014 conns | 0 |
 | slowloris | node:8080 | 10 | 2s | 10 conns held | 0 |
+
+**Total bench score: 134.7** (peak: 134.7 @ v2.9)
 
 ### Connection scaling (http, node:8080)
 | Connections | RPS |
 |---|---|
-| 5 | 30,059 |
-| 10 | 40,551 |
-| 20 | 45,178 |
-| 50 | 49,394 |
-| 100 | 48,618 |
-| 200 | 57,400 |
-| 400 | **60,742** |
+| 200 | 55,332 |
+| 400 | **60,568** |
+| 600 | 58,837 |
+| 800 | 56,926 |
+
+### Connection scaling (h2, cf-sim:8444)
+| Connections | RPS |
+|---|---|
+| 20 | 17,734 |
+| 50 | 24,073 |
+| 80 | **30,288** |
+| 100 | 31,394 |
 
 ### UDP scaling
 | Connections | PPS |
