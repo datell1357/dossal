@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.3"
+VERSION = "3.4"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -781,6 +781,8 @@ def auto_probe(url):
             results['protocols'].append('http')
             if b'HTTP/2' in data or b'h2' in data:
                 results['protocols'].append('h2')
+            # Don't add to recommended here — ALPN check will handle h2,
+            # and http/https should be added only if h2 is NOT detected
             if scheme == 'https':
                 results['recommended'].append('https')
             else:
@@ -813,7 +815,8 @@ def auto_probe(url):
     # If h2 is recommended, remove duplicate http/https (h2 covers both)
     if 'h2' in results['recommended']:
         results['recommended'] = [m for m in results['recommended'] if m not in ('http', 'https')]
-        results['recommended'].insert(0, 'h2')
+        if 'h2' not in results['recommended']:
+            results['recommended'].insert(0, 'h2')
 
     # Default recommendation if nothing detected
     if not results['recommended']:
