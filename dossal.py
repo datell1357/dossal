@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.1"
+VERSION = "3.2"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -856,6 +856,13 @@ def main():
                 auto_modes.append(l4)
         print(f"[auto] using: {', '.join(auto_modes)}", file=sys.stderr)
         args.mode = ','.join(auto_modes)
+        # Set per-mode optimal connections for auto
+        _AUTO_CONNS = {'http': 200, 'https': 50, 'h2': 80, 'grpc': 50, 'udp': 1, 'quic': 1, 'syn': 10, 'rst': 10}
+        auto_conn_parts = [f"{m}={_AUTO_CONNS.get(m, 50)}" for m in auto_modes]
+        if args.conns:
+            args.conns = args.conns + ',' + ','.join(auto_conn_parts)
+        else:
+            args.conns = ','.join(auto_conn_parts)
 
     modes = list(dict.fromkeys(m.strip() for m in args.mode.split(",")))  # dedupe, preserve order
     for m in modes:
