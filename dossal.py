@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "2.9"
+VERSION = "3.1"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -781,7 +781,10 @@ def auto_probe(url):
             results['protocols'].append('http')
             if b'HTTP/2' in data or b'h2' in data:
                 results['protocols'].append('h2')
-            results['recommended'].extend(['http', 'https'] if scheme == 'https' else ['http'])
+            if scheme == 'https':
+                results['recommended'].append('https')
+            else:
+                results['recommended'].append('http')
     except Exception:
         pass
 
@@ -804,6 +807,11 @@ def auto_probe(url):
                     results['recommended'].insert(0, 'h2')
         except Exception:
             pass
+
+    # If h2 is recommended, remove duplicate http/https (h2 covers both)
+    if 'h2' in results['recommended']:
+        results['recommended'] = [m for m in results['recommended'] if m not in ('http', 'https')]
+        results['recommended'].insert(0, 'h2')
 
     # Default recommendation if nothing detected
     if not results['recommended']:
@@ -849,7 +857,7 @@ def main():
         print(f"[auto] using: {', '.join(auto_modes)}", file=sys.stderr)
         args.mode = ','.join(auto_modes)
 
-    modes = [m.strip() for m in args.mode.split(",")]
+    modes = list(dict.fromkeys(m.strip() for m in args.mode.split(",")))  # dedupe, preserve order
     for m in modes:
         if m not in WORKERS:
             print(f"Unknown mode: {m}. Available: {', '.join(WORKERS.keys())}", file=sys.stderr)
