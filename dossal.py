@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "2.8"
+VERSION = "2.9"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -714,7 +714,9 @@ async def impact_score(url, stats, duration, sampler=None, base_cpu=0.0):
 # MAIN
 # ═══════════════════════════════════════════════════════════════════
 
-async def run(modes, url, conns, duration, stats, payload_size, args=None):
+async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_conns=None):
+    if mode_conns is None:
+        mode_conns = {}
     stop = asyncio.Event()
     async def finish():
         await asyncio.sleep(duration); stop.set()
@@ -723,12 +725,10 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None):
     for mode in modes:
         worker_fn = WORKERS[mode]
         pl = payload_size if payload_size is not None else DEFAULT_PAYLOADS.get(mode, 0)
-        # UDP/QUIC: use 1 connection by default (or --threads)
-        eff_conns = conns
-        if mode in ('udp', 'quic') and getattr(args, 'threads', None):
-            eff_conns = args.threads
-        elif mode in ('udp', 'quic'):
-            eff_conns = 1
+        # Per-mode connection count
+        eff_conns = mode_conns.get(mode, conns)
+        if mode in ('udp', 'quic') and eff_conns > 1 and mode not in mode_conns:
+            eff_conns = 1  # default: 1 for UDP/QUIC unless explicitly set
         for i in range(eff_conns):
             workers.append(asyncio.create_task(worker_fn(i, url, stats, duration, stop, pl)))
     try:
@@ -820,6 +820,8 @@ def main():
     ap.add_argument("--url", required=True)
     ap.add_argument("--connections", type=int, default=100,
         help="Connections per mode (default: 100)")
+    ap.add_argument("--conns", default=None,
+        help='Per-mode connection overrides: "http=400,h2=80,udp=1,syn=10"')
     ap.add_argument("--duration", type=int, default=10)
     ap.add_argument("--payload-size", type=int, default=None,
         help="Override default payload size (per mode)")
@@ -857,6 +859,14 @@ def main():
     _INTENSITY = {"light": 10, "balanced": 50, "max": 400}
     if args.connections == 100:
         args.connections = _INTENSITY.get(args.intensity, 50)
+
+    # Per-mode connection overrides
+    mode_conns = {}
+    if args.conns:
+        for part in args.conns.split(','):
+            if '=' in part:
+                m, c = part.split('=', 1)
+                mode_conns[m.strip()] = int(c.strip())
 
     stats = Stats()
     payload_size = args.payload_size
@@ -904,7 +914,7 @@ def main():
                     last_req, last_pkt, last_t = stats.requests, stats.packets, now
             live_task = asyncio.create_task(_live_printer())
 
-        await run(modes, args.url, args.connections, args.duration, stats, payload_size, args)
+        await run(modes, args.url, args.connections, args.duration, stats, payload_size, args, mode_conns)
         if live_task:
             live_task.cancel()
         report = stats.report(modes, args.url, args.connections, args.duration)
