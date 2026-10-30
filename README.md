@@ -1,7 +1,7 @@
 # dossal — comprehensive DoS stress engine
 
 ## Status
-- **dossal v2.9** (Python asyncio) — 13 attack modes, multi-mode, auto mode, per-mode connections, impact scoring, live stats.
+- **dossal v3.4** (Python asyncio) — 13 attack modes, multi-mode, auto mode, per-mode connections, impact scoring, live stats.
 - **cf-sim v0.8** (Cloudflare-like edge simulator) — rate limiting, metrics, h1/h2.
 - Local targets only — no real/public server tests.
 
@@ -141,7 +141,7 @@ dossal.py (single file, Python asyncio)
 | rst | node:8080 | 10 | 2s | 12,014 conns | 0 |
 | slowloris | node:8080 | 10 | 2s | 10 conns held | 0 |
 
-**Total bench score: 134.7** (peak: 134.7 @ v2.9)
+**Total bench score: 137.8** (peak: 137.8 @ v3.4)
 
 ### Connection scaling (http, node:8080)
 | Connections | RPS |
