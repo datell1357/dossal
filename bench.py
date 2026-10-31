@@ -18,7 +18,7 @@ DOSSAL = os.path.join(LAB, 'dossal.py')
 # Mode configs: (mode, url, connections, duration)
 TESTS = [
     # mode, url, connections, duration — tuned to measured optima
-    ('http',      'http://127.0.0.1:8080',     400, 2),   # 60k RPS at 400c
+    ('http',      'http://127.0.0.1:8080',     400, 2),   # 98k RPS at 400c (v3.5)
     ('https',     'https://127.0.0.1:8443',    50, 2),    # 20k RPS
     ('h2',        'https://127.0.0.1:8444',    120, 2),   # 34k RPS at 120c (v3.4)
     ('grpc',      'https://127.0.0.1:50051/',  50, 2),    # 1,050 RPS at 50c (v3.4)
