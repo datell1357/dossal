@@ -20,8 +20,8 @@ TESTS = [
     # mode, url, connections, duration — tuned to measured optima
     ('http',      'http://127.0.0.1:8080',     400, 2),   # 60k RPS at 400c
     ('https',     'https://127.0.0.1:8443',    50, 2),    # 20k RPS
-    ('h2',        'https://127.0.0.1:8444',    80, 2),    # 30k RPS at 80c (v2.9)
-    ('grpc',      'https://127.0.0.1:50051/',  20, 2),    # 420 RPS at 20c
+    ('h2',        'https://127.0.0.1:8444',    120, 2),   # 34k RPS at 120c (v3.4)
+    ('grpc',      'https://127.0.0.1:50051/',  50, 2),    # 1,050 RPS at 50c (v3.4)
     ('quic',      'udp://127.0.0.1:4443',      1, 2),     # 106k pps at 1c
     ('udp',       'udp://127.0.0.1:9999',      1, 2),     # 106k pps at 1c
     ('syn',       'tcp://127.0.0.1:8080',      10, 2),    # 13k conns
