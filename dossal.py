@@ -170,6 +170,7 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n"
            f"User-Agent: dossal/{VERSION}\r\n\r\n")
     req_bytes = req.encode()
+
     while not stop.is_set():
         try:
             async def _write_read():
