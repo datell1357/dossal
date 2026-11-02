@@ -52,12 +52,12 @@ def main():
         mode, url, conns, dur = test[0], test[1], test[2], test[3]
         extra = test[4] if len(test) > 4 else None
         result = run_mode(mode, url, conns, dur, extra)
-        stats['_mode'] = mode
-        results.append(stats)
-        print(f"  {mode:12s} rps={stats.get('rps',0):>10,.0f}  "
-              f"pkts={stats.get('packets',0):>8}  "
-              f"conns={stats.get('connections_made',0):>6}  "
-              f"err={stats.get('errors',0)}", flush=True)
+        result['_mode'] = mode
+        results.append(result)
+        print(f"  {mode:12s} rps={result.get('rps',0):>10,.0f}  "
+              f"pkts={result.get('packets',0):>8}  "
+              f"conns={result.get('connections_made',0):>6}  "
+              f"err={result.get('errors',0)}", flush=True)
 
     # Impact score: attack heavy-victim with http, measure
     impact_cmd = [PY, DOSSAL, '--mode', 'http', '--url', 'http://127.0.0.1:8082',
