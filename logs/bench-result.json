@@ -1,21 +1,21 @@
 {
-  "total_score": 165.6,
+  "total_score": 129.1,
   "impact_score": 1.3,
-  "wall_time": 17.603375911712646,
+  "wall_time": 18.323158979415894,
   "results": [
     {
       "tool": "dossal",
-      "version": "3.4",
+      "version": "3.6",
       "modes": [
         "http"
       ],
       "url": "http://127.0.0.1:8080",
       "connections": 400,
       "duration_s": 2,
-      "requests": 133492,
-      "rps": 66746.0,
-      "bytes": 19089356,
-      "bps": 9544678.0,
+      "requests": 82248,
+      "rps": 41124.0,
+      "bytes": 11761464,
+      "bps": 5880732.0,
       "packets": 0,
       "pps": 0.0,
       "connections_made": 0,
@@ -24,36 +24,36 @@
     },
     {
       "tool": "dossal",
-      "version": "3.4",
+      "version": "3.6",
       "modes": [
         "https"
       ],
       "url": "https://127.0.0.1:8443",
       "connections": 50,
       "duration_s": 2,
-      "requests": 86245,
-      "rps": 43122.5,
-      "bytes": 20536192,
-      "bps": 10268096.0,
+      "requests": 44552,
+      "rps": 22276.0,
+      "bytes": 11961302,
+      "bps": 5980651.0,
       "packets": 0,
       "pps": 0.0,
       "connections_made": 0,
-      "errors": 11,
+      "errors": 8,
       "_mode": "https"
     },
     {
       "tool": "dossal",
-      "version": "3.4",
+      "version": "3.6",
       "modes": [
         "h2"
       ],
       "url": "https://127.0.0.1:8444",
       "connections": 120,
       "duration_s": 2,
-      "requests": 62784,
-      "rps": 31392.0,
-      "bytes": 742656,
-      "bps": 371328.0,
+      "requests": 50912,
+      "rps": 25456.0,
+      "bytes": 585216,
+      "bps": 292608.0,
       "packets": 0,
       "pps": 0.0,
       "connections_made": 0,
@@ -62,7 +62,7 @@
     },
     {
       "tool": "dossal",
-      "version": "3.4",
+      "version": "3.6",
       "modes": [
         "grpc"
       ],
@@ -81,7 +81,7 @@
     },
     {
       "tool": "dossal",
-      "version": "3.4",
+      "version": "3.6",
       "modes": [
         "quic"
       ],
@@ -90,17 +90,17 @@
       "duration_s": 2,
       "requests": 0,
       "rps": 0.0,
-      "bytes": 373161255,
-      "bps": 186580627.5,
-      "packets": 307635,
-      "pps": 153817.5,
+      "bytes": 234731269,
+      "bps": 117365634.5,
+      "packets": 193513,
+      "pps": 96756.5,
       "connections_made": 0,
       "errors": 0,
       "_mode": "quic"
     },
     {
       "tool": "dossal",
-      "version": "3.4",
+      "version": "3.6",
       "modes": [
         "udp"
       ],
@@ -109,17 +109,17 @@
       "duration_s": 2,
       "requests": 0,
       "rps": 0.0,
-      "bytes": 449947400,
-      "bps": 224973700.0,
-      "packets": 321391,
-      "pps": 160695.5,
+      "bytes": 784000000,
+      "bps": 392000000.0,
+      "packets": 560000,
+      "pps": 280000.0,
       "connections_made": 0,
       "errors": 0,
       "_mode": "udp"
     },
     {
       "tool": "dossal",
-      "version": "3.4",
+      "version": "3.6",
       "modes": [
         "syn"
       ],
@@ -132,13 +132,13 @@
       "bps": 0.0,
       "packets": 0,
       "pps": 0.0,
-      "connections_made": 15083,
-      "errors": 3444,
+      "connections_made": 13485,
+      "errors": 0,
       "_mode": "syn"
     },
     {
       "tool": "dossal",
-      "version": "3.4",
+      "version": "3.6",
       "modes": [
         "rst"
       ],
@@ -151,13 +151,13 @@
       "bps": 0.0,
       "packets": 0,
       "pps": 0.0,
-      "connections_made": 109,
-      "errors": 6408,
+      "connections_made": 16317,
+      "errors": 0,
       "_mode": "rst"
     },
     {
       "tool": "dossal",
-      "version": "3.4",
+      "version": "3.6",
       "modes": [
         "slowloris"
       ],
@@ -166,11 +166,11 @@
       "duration_s": 2,
       "requests": 0,
       "rps": 0.0,
-      "bytes": 360,
-      "bps": 180.0,
+      "bytes": 900,
+      "bps": 450.0,
       "packets": 0,
       "pps": 0.0,
-      "connections_made": 4,
+      "connections_made": 10,
       "errors": 0,
       "_mode": "slowloris"
     }
