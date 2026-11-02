@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.4"
+VERSION = "3.6"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -271,29 +271,52 @@ async def tcp_worker(name, url, stats, duration, stop, payload_size=1024):
     if writer.transport:
         writer.transport.abort()
 
+_UDP_NPROCS = [4]  # mutable list to allow global override
+
+def _mp_udp_send(args_tuple):
+    """Multi-process UDP sender: runs in a child process."""
+    host, port, duration, payload_size = args_tuple
+    import time as _time
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+    payload = b"B" * payload_size
+    sent = 0
+    end = _time.time() + duration
+    while _time.time() < end:
+        n = 2000
+        try:
+            for _ in range(n):
+                sock.sendto(payload, (host, port))
+            sent += n
+        except Exception:
+            break
+    sock.close()
+    return sent
+
 async def udp_worker(name, url, stats, duration, stop, payload_size=1400):
     host, port = parse_udp(url)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    payload = b"B" * payload_size
-    count = [0]
+    n_procs = _UDP_NPROCS[0]
+    
+    # Spawn N child processes
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, duration, payload_size)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_udp_send, targets)
+    
+    # Wait for completion
     loop = asyncio.get_event_loop()
-
-    def _send_batch(n):
-        for _ in range(n):
-            if stop.is_set():
-                break
-            sock.sendto(payload, (host, port))
-            count[0] += 1
-        return count[0]
-
-    last = 0
-    while not stop.is_set():
-        sent = await loop.run_in_executor(None, _send_batch, 2000)
-        delta = sent - last
-        stats.bytes += delta * payload_size
-        stats.packets += delta
-        last = sent
-    sock.close()
+    try:
+        sent = await loop.run_in_executor(None, async_result.get, duration + 5)
+    except Exception:
+        sent = [0] * n_procs
+    finally:
+        pool.terminate()
+        pool.join()
+    
+    total = sum(sent) if isinstance(sent, list) else sent
+    stats.packets += total
+    stats.bytes += total * payload_size
 
 async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
     host, port, path = parse_http(url)
@@ -880,6 +903,13 @@ def main():
     _INTENSITY = {"light": 10, "balanced": 50, "max": 400}
     if args.connections == 100:
         args.connections = _INTENSITY.get(args.intensity, 50)
+
+    # UDP/QUIC: set process count from --threads
+    global _UDP_NPROCS
+    if args.threads:
+        _UDP_NPROCS[0] = max(1, min(16, args.threads))
+    else:
+        _UDP_NPROCS[0] = 4  # default: 4 processes
 
     # Per-mode connection overrides
     mode_conns = {}
