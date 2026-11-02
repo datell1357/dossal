@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.12"
+VERSION = "3.13"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -510,7 +510,7 @@ async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
 
 # ── Raw HTTP: multiprocess raw socket (max RPS) ───────────────────
 def _mp_http_send(args_tuple):
-    """Multi-process raw socket HTTP sender."""
+    """Multi-process raw socket HTTP sender (non-blocking select)."""
     import time as _time
     host, port, path, duration = args_tuple
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
