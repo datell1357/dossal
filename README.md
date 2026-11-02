@@ -46,7 +46,7 @@ Options:
   --impact             Enable victim impact scoring (requires psutil)
   --intensity {light,balanced,max}  Preset: light(10c), balanced(50c), max(400c)
   --live               Print RPS/PPS every second during attack
-  --threads N          Override connections for UDP/QUIC modes
+  --threads N          UDP/QUIC multiprocess count (default 4, max 16)
   --auto               Auto-detect protocol + include L4 modes
 ```
 
@@ -56,9 +56,9 @@ Options:
 | `http` | L7 | HTTP/1.1 keep-alive flood | **60,742 RPS** (400c) |
 | `https` | L7 | TLS 1.3 keep-alive flood | **20,676 RPS** |
 | `h2` | L7 | HTTP/2 multiplexed flood (BATCH=32) | **30,288 RPS** (80c) |
-| `grpc` | L7 | gRPC (HTTP/2 + framing) flood | **1,050 RPS** (50c) |
-| `quic` | L4 | QUIC/HTTP3 UDP datagram flood | **106,000 pps** (1c) |
-| `udp` | L4 | Raw UDP datagram flood | **106,000 pps** (1c) |
+| `grpc` | L7 | gRPC (HTTP/2 + framing) flood | **2,520 RPS** (80c) |
+| `quic` | L4 | QUIC/HTTP3 UDP datagram flood (multiproc) | **294,000 pps** (8p) |
+| `udp` | L4 | Raw UDP datagram flood (multiproc) | **289,000 pps** (8p) |
 | `tcp` | L4 | Raw TCP byte flood | backpressure-limited |
 | `syn` | L4 | TCP connect-only (SYN flood) | **11,000+ conns/2s** |
 | `rst` | L4 | TCP RST flood (SO_LINGER abort) | **12,000+ conns/2s** |
@@ -141,7 +141,7 @@ dossal.py (single file, Python asyncio)
 | rst | node:8080 | 10 | 2s | 12,014 conns | 0 |
 | slowloris | node:8080 | 10 | 2s | 10 conns held | 0 |
 
-**Total bench score: 137.8** (peak: 137.8 @ v3.4)
+**Total bench score: 165.6** (peak: 165.6 @ v3.5)
 
 ### Connection scaling (http, node:8080)
 | Connections | RPS |

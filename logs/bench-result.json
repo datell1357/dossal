@@ -1,21 +1,21 @@
 {
-  "total_score": 115.4,
+  "total_score": 121.6,
   "impact_score": 1.3,
-  "wall_time": 18.485934019088745,
+  "wall_time": 18.541118144989014,
   "results": [
     {
       "tool": "dossal",
-      "version": "3.7",
+      "version": "3.8",
       "modes": [
         "http"
       ],
       "url": "http://127.0.0.1:8080",
       "connections": 400,
       "duration_s": 2,
-      "requests": 78482,
-      "rps": 39241.0,
-      "bytes": 11222926,
-      "bps": 5611463.0,
+      "requests": 80633,
+      "rps": 40316.5,
+      "bytes": 11530519,
+      "bps": 5765259.5,
       "packets": 0,
       "pps": 0.0,
       "connections_made": 0,
@@ -24,36 +24,36 @@
     },
     {
       "tool": "dossal",
-      "version": "3.7",
+      "version": "3.8",
       "modes": [
         "https"
       ],
       "url": "https://127.0.0.1:8443",
       "connections": 50,
       "duration_s": 2,
-      "requests": 42595,
-      "rps": 21297.5,
-      "bytes": 11161504,
-      "bps": 5580752.0,
+      "requests": 47334,
+      "rps": 23667.0,
+      "bytes": 13558721,
+      "bps": 6779360.5,
       "packets": 0,
       "pps": 0.0,
       "connections_made": 0,
-      "errors": 9,
+      "errors": 0,
       "_mode": "https"
     },
     {
       "tool": "dossal",
-      "version": "3.7",
+      "version": "3.8",
       "modes": [
         "h2"
       ],
       "url": "https://127.0.0.1:8444",
       "connections": 120,
       "duration_s": 2,
-      "requests": 49856,
-      "rps": 24928.0,
-      "bytes": 552192,
-      "bps": 276096.0,
+      "requests": 53632,
+      "rps": 26816.0,
+      "bytes": 641280,
+      "bps": 320640.0,
       "packets": 0,
       "pps": 0.0,
       "connections_made": 0,
@@ -62,26 +62,26 @@
     },
     {
       "tool": "dossal",
-      "version": "3.7",
+      "version": "3.8",
       "modes": [
         "grpc"
       ],
       "url": "https://127.0.0.1:50051/",
-      "connections": 50,
+      "connections": 80,
       "duration_s": 2,
-      "requests": 3150,
-      "rps": 1575.0,
-      "bytes": 3241350,
-      "bps": 1620675.0,
+      "requests": 5040,
+      "rps": 2520.0,
+      "bytes": 5186160,
+      "bps": 2593080.0,
       "packets": 0,
       "pps": 0.0,
       "connections_made": 0,
-      "errors": 50,
+      "errors": 80,
       "_mode": "grpc"
     },
     {
       "tool": "dossal",
-      "version": "3.7",
+      "version": "3.8",
       "modes": [
         "quic"
       ],
@@ -90,17 +90,17 @@
       "duration_s": 2,
       "requests": 0,
       "rps": 0.0,
-      "bytes": 698688000,
-      "bps": 349344000.0,
-      "packets": 576000,
-      "pps": 288000.0,
+      "bytes": 693836000,
+      "bps": 346918000.0,
+      "packets": 572000,
+      "pps": 286000.0,
       "connections_made": 0,
       "errors": 0,
       "_mode": "quic"
     },
     {
       "tool": "dossal",
-      "version": "3.7",
+      "version": "3.8",
       "modes": [
         "udp"
       ],
@@ -119,7 +119,7 @@
     },
     {
       "tool": "dossal",
-      "version": "3.7",
+      "version": "3.8",
       "modes": [
         "syn"
       ],
@@ -132,13 +132,13 @@
       "bps": 0.0,
       "packets": 0,
       "pps": 0.0,
-      "connections_made": 15503,
-      "errors": 298,
+      "connections_made": 15348,
+      "errors": 1079,
       "_mode": "syn"
     },
     {
       "tool": "dossal",
-      "version": "3.7",
+      "version": "3.8",
       "modes": [
         "rst"
       ],
@@ -151,13 +151,13 @@
       "bps": 0.0,
       "packets": 0,
       "pps": 0.0,
-      "connections_made": 16,
-      "errors": 4921,
+      "connections_made": 123,
+      "errors": 5310,
       "_mode": "rst"
     },
     {
       "tool": "dossal",
-      "version": "3.7",
+      "version": "3.8",
       "modes": [
         "slowloris"
       ],
@@ -166,11 +166,11 @@
       "duration_s": 2,
       "requests": 0,
       "rps": 0.0,
-      "bytes": 540,
-      "bps": 270.0,
+      "bytes": 630,
+      "bps": 315.0,
       "packets": 0,
       "pps": 0.0,
-      "connections_made": 6,
+      "connections_made": 7,
       "errors": 0,
       "_mode": "slowloris"
     }
