@@ -50,18 +50,19 @@ Options:
   --auto               Auto-detect protocol + include L4 modes
 ```
 
-## Attack modes (13)
+## Attack modes (14)
 | Mode | Layer | Mechanism | Measured (local) |
 |---|---|---|---:|
-| `http` | L7 | HTTP/1.1 keep-alive flood | **60,742 RPS** (400c) |
+| `http` | L7 | HTTP/1.1 keep-alive flood (asyncio) | **35-98k RPS** (400c) |
+| `raw` | L7 | HTTP/1.1 raw socket flood (multiproc) | **59k RPS** (8p) |
 | `https` | L7 | TLS 1.3 keep-alive flood | **20,676 RPS** |
 | `h2` | L7 | HTTP/2 multiplexed flood (BATCH=32) | **30,288 RPS** (80c) |
 | `grpc` | L7 | gRPC (HTTP/2 + framing) flood | **2,520 RPS** (80c) |
 | `quic` | L4 | QUIC/HTTP3 UDP datagram flood (multiproc) | **294,000 pps** (8p) |
-| `udp` | L4 | Raw UDP datagram flood (multiproc) | **289,000 pps** (8p) |
-| `tcp` | L4 | Raw TCP byte flood | backpressure-limited |
+| `udp` | L4 | Raw UDP datagram flood (multiproc) | **296,000 pps** (8p) |
+| `tcp` | L4 | Raw TCP byte flood (multiproc) | **9.4k pkts** (8p) |
 | `syn` | L4 | TCP connect-only (SYN flood) | **11,000+ conns/2s** |
-| `rst` | L4 | TCP RST flood (SO_LINGER abort) | **12,000+ conns/2s** |
+| `rst` | L4 | TCP RST flood (multiproc) | **55,000 conns/2s** (4p) |
 | `fin` | L4 | TCP FIN flood (graceful close) | 1,500+ conns/2s |
 | `websocket` | L7 | WS upgrade + frame flood | — |
 | `slowloris` | L7 | Slow HTTP header drip | connection holding |
