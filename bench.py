@@ -23,16 +23,19 @@ TESTS = [
     ('h2',        'https://127.0.0.1:8444',    120, 2),   # 34k RPS at 120c (v3.4)
     ('grpc',      'https://127.0.0.1:50051/',  50, 2),    # 1,050 RPS at 50c (v3.4)
     ('quic',      'udp://127.0.0.1:4443',      1, 2),     # 106k pps at 1c
-    ('udp',       'udp://127.0.0.1:9999',      1, 2),     # 106k pps at 1c
+    ('udp',         'udp://127.0.0.1:9999',     1, 2, {'threads': 8}),  # 289k PPS (8 procs)
     ('syn',       'tcp://127.0.0.1:8080',      10, 2),    # 13k conns
     ('rst',       'tcp://127.0.0.1:8080',      10, 2),    # 14k conns
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
 ]
 
-def run_mode(mode, url, conns, dur):
+def run_mode(mode, url, conns, dur, extra=None):
     """Run one mode, return parsed stats."""
     cmd = [PY, DOSSAL, '--mode', mode, '--url', url,
            '--connections', str(conns), '--duration', str(dur)]
+    if extra:
+        for k, v in extra.items():
+            cmd.extend([f'--{k}', str(v)])
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=dur + 15)
         out = r.stdout.strip()
@@ -45,8 +48,10 @@ def run_mode(mode, url, conns, dur):
 def main():
     t0 = time.time()
     results = []
-    for mode, url, conns, dur in TESTS:
-        stats = run_mode(mode, url, conns, dur)
+    for test in TESTS:
+        mode, url, conns, dur = test[0], test[1], test[2], test[3]
+        extra = test[4] if len(test) > 4 else None
+        result = run_mode(mode, url, conns, dur, extra)
         stats['_mode'] = mode
         results.append(stats)
         print(f"  {mode:12s} rps={stats.get('rps',0):>10,.0f}  "
