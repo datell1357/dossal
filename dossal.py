@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.11"
+VERSION = "3.12"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -288,15 +288,9 @@ async def tcp_worker(name, url, stats, duration, stop, payload_size=1024):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_tcp_flood, targets)
     
-    loop = asyncio.get_event_loop()
-    try:
-        results = await loop.run_in_executor(None, async_result.get, duration + 5)
-    except Exception:
+    results = await _wait_pool(pool, async_result, duration + 5)
+    if results is None:
         results = [(0, 0, 0)] * n_procs
-    finally:
-        pool.terminate()
-        pool.join()
-    
     stats.conns += n_procs
     for bytes_sent, pkts, errors in results:
         stats.bytes += bytes_sent
@@ -337,16 +331,10 @@ async def udp_worker(name, url, stats, duration, stop, payload_size=1400):
     async_result = pool.map_async(_mp_udp_send, targets)
     
     # Wait for completion
-    loop = asyncio.get_event_loop()
-    try:
-        sent = await loop.run_in_executor(None, async_result.get, duration + 5)
-    except Exception:
-        sent = [0] * n_procs
-    finally:
-        pool.terminate()
-        pool.join()
-    
-    total = sum(sent) if isinstance(sent, list) else sent
+    results = await _wait_pool(pool, async_result, duration + 5)
+    if results is None:
+        results = [0] * n_procs
+    total = sum(results) if isinstance(results, list) else results
     stats.packets += total
     stats.bytes += total * payload_size
 
@@ -512,16 +500,10 @@ async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_quic_send, targets)
     
-    loop = asyncio.get_event_loop()
-    try:
-        sent = await loop.run_in_executor(None, async_result.get, duration + 5)
-    except Exception:
-        sent = [0] * n_procs
-    finally:
-        pool.terminate()
-        pool.join()
-    
-    total = sum(sent) if isinstance(sent, list) else sent
+    results = await _wait_pool(pool, async_result, duration + 5)
+    if results is None:
+        results = [0] * n_procs
+    total = sum(results) if isinstance(results, list) else results
     plen = min(payload_size, 1200) + 13  # QUIC header + payload
     stats.packets += total
     stats.bytes += total * plen
@@ -555,26 +537,34 @@ def _mp_http_send(args_tuple):
         errors += 1
     return sent, errors
 
+async def _wait_pool(pool, async_result, timeout):
+    """Wait for a multiprocessing pool result using a dedicated executor."""
+    loop = asyncio.get_event_loop()
+    executor = asyncio.get_event_loop().create_task  # placeholder
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ded:
+        try:
+            results = await loop.run_in_executor(ded, async_result.get, timeout)
+        except Exception:
+            results = None
+    pool.terminate()
+    pool.join()
+    return results
+
 async def raw_worker(name, url, stats, duration, stop, payload_size=0):
     """Raw HTTP multiprocess worker: max RPS via raw socket."""
     host, port, path = parse_http(url)
     n_procs = max(1, min(16, _UDP_NPROCS[0]))
     
     import multiprocessing as mp
-    import time as _time_mp
     ctx = mp.get_context('spawn')
     targets = [(host, port, path, duration)] * n_procs
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_http_send, targets)
     
-    loop = asyncio.get_event_loop()
-    try:
-        results = await loop.run_in_executor(None, async_result.get, duration + 5)
-    except Exception:
+    results = await _wait_pool(pool, async_result, duration + 5)
+    if results is None:
         results = [(0, 0)] * n_procs
-    finally:
-        pool.terminate()
-        pool.join()
     
     for sent, errors in results:
         stats.requests += sent
@@ -643,15 +633,9 @@ async def rst_worker(name, url, stats, duration, stop, payload_size=1):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_rst_flood, targets)
     
-    loop = asyncio.get_event_loop()
-    try:
-        results = await loop.run_in_executor(None, async_result.get, duration + 5)
-    except Exception:
+    results = await _wait_pool(pool, async_result, duration + 5)
+    if results is None:
         results = [(0, 0)] * n_procs
-    finally:
-        pool.terminate()
-        pool.join()
-    
     for conns, errs in results:
         stats.conns += conns
         stats.errors += errs
@@ -886,6 +870,14 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
         await asyncio.sleep(duration); stop.set()
     task = asyncio.create_task(finish())
     workers = []
+    # Split process budget among L4 multiproc modes
+    l4_modes = [m for m in modes if m in ('udp', 'quic', 'rst', 'tcp', 'raw')]
+    n_l4 = len(l4_modes)
+    if n_l4 > 1:
+        # Distribute _UDP_NPROCS across L4 modes
+        per_mode = max(1, _UDP_NPROCS[0] // n_l4)
+        _UDP_NPROCS[0] = per_mode
+    
     for mode in modes:
         worker_fn = WORKERS[mode]
         pl = payload_size if payload_size is not None else DEFAULT_PAYLOADS.get(mode, 0)
@@ -950,7 +942,7 @@ def auto_probe(url):
             if scheme == 'https':
                 results['recommended'].append('https')
             else:
-                results['recommended'].append('http')
+                results['recommended'].append('raw')  # raw HTTP multiproc (higher RPS)
     except Exception:
         pass
 
@@ -1026,7 +1018,7 @@ def main():
         print(f"[auto] using: {', '.join(auto_modes)}", file=sys.stderr)
         args.mode = ','.join(auto_modes)
         # Set per-mode optimal connections for auto
-        _AUTO_CONNS = {'http': 200, 'https': 50, 'h2': 80, 'grpc': 50, 'udp': 1, 'quic': 1, 'syn': 10, 'rst': 10}
+        _AUTO_CONNS = {'http': 200, 'raw': 1, 'https': 50, 'h2': 80, 'grpc': 50, 'udp': 1, 'quic': 1, 'syn': 10, 'rst': 4, 'tcp': 1}
         auto_conn_parts = [f"{m}={_AUTO_CONNS.get(m, 50)}" for m in auto_modes]
         if args.conns:
             args.conns = args.conns + ',' + ','.join(auto_conn_parts)
