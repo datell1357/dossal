@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.9"
+VERSION = "3.10"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -253,23 +253,55 @@ async def ws_worker(name, url, stats, duration, stop, payload_size=128):
     except Exception:
         pass
 
+def _mp_tcp_flood(args_tuple):
+    """Multi-process TCP byte flooder: connect, send repeatedly."""
+    host, port, duration, payload_size = args_tuple
+    import time as _time
+    payload = b"A" * payload_size
+    bytes_sent = 0
+    pkts = 0
+    errors = 0
+    end = _time.time() + duration
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5.0)
+        s.connect((host, port))
+        while _time.time() < end:
+            try:
+                s.send(payload)
+                bytes_sent += len(payload)
+                pkts += 1
+            except Exception:
+                break
+        s.close()
+    except Exception:
+        errors += 1
+    return bytes_sent, pkts, errors
+
 async def tcp_worker(name, url, stats, duration, stop, payload_size=1024):
     host, port = parse_tcp(url)
-    reader, writer = await asyncio.open_connection(host, port)
-    stats.conns += 1
-    payload = b"A" * payload_size
+    n_procs = max(1, min(8, _UDP_NPROCS[0]))  # TCP uses same proc count
+    
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, duration, payload_size)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_tcp_flood, targets)
+    
     loop = asyncio.get_event_loop()
-    while not stop.is_set():
-        try:
-            writer.write(payload)
-            await asyncio.wait_for(writer.drain(), timeout=5.0)
-            stats.bytes += len(payload)
-            stats.packets += 1
-        except Exception:
-            stats.errors += 1
-            break
-    if writer.transport:
-        writer.transport.abort()
+    try:
+        results = await loop.run_in_executor(None, async_result.get, duration + 5)
+    except Exception:
+        results = [(0, 0, 0)] * n_procs
+    finally:
+        pool.terminate()
+        pool.join()
+    
+    stats.conns += n_procs
+    for bytes_sent, pkts, errors in results:
+        stats.bytes += bytes_sent
+        stats.packets += pkts
+        stats.errors += errors
 
 _UDP_NPROCS = [4]  # mutable list to allow global override
 
