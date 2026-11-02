@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.7"
+VERSION = "3.8"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -409,21 +409,24 @@ async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
     # gRPC request frame: 1-byte flag + 4-byte length + payload
     grpc_payload = b'X' * max(1, payload_size)
     payload = b'\x00' + len(grpc_payload).to_bytes(4, 'big') + grpc_payload
-    # Fire-and-forget: send gRPC requests, count sent (not received)
-    # Responses are processed lazily in the background
+    # Fire-and-forget: batch gRPC requests, drain in background
     reader_task = asyncio.create_task(_grpc_reader(conn, reader, stats))
+    BATCH = 1
     error = None
     while not stop.is_set():
         try:
-            stream_id = conn.get_next_available_stream_id()
-            conn.send_headers(stream_id, headers, end_stream=False)
-            conn.send_data(stream_id, payload, end_stream=True)
+            for _ in range(BATCH):
+                if stop.is_set():
+                    break
+                stream_id = conn.get_next_available_stream_id()
+                conn.send_headers(stream_id, headers, end_stream=False)
+                conn.send_data(stream_id, payload, end_stream=True)
             data = conn.data_to_send()
             if data:
                 writer.write(data)
                 await asyncio.wait_for(writer.drain(), timeout=5.0)
-            stats.requests += 1
-            stats.bytes += len(payload)
+            stats.requests += BATCH
+            stats.bytes += BATCH * len(payload)
         except Exception as e:
             stats.errors += 1
             error = e
