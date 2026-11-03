@@ -1303,12 +1303,10 @@ def auto_probe(url):
             results['protocols'].append('http')
             if b'HTTP/2' in data or b'h2' in data:
                 results['protocols'].append('h2')
-            # Don't add to recommended here — ALPN check will handle h2,
-            # and http/https should be added only if h2 is NOT detected
             if scheme == 'https':
-                results['recommended'].append('https')
+                results['recommended'].append('httpsmp')  # HTTPS multiproc
             else:
-                results['recommended'].append('raw')  # raw HTTP multiproc (higher RPS)
+                results['recommended'].append('raw')  # raw HTTP multiproc
     except Exception:
         pass
 
@@ -1336,13 +1334,15 @@ def auto_probe(url):
     results['recommended'] = list(dict.fromkeys(results['recommended']))
     # If h2 is recommended, remove duplicate http/https (h2 covers both)
     if 'h2' in results['recommended']:
-        results['recommended'] = [m for m in results['recommended'] if m not in ('http', 'https')]
+        results['recommended'] = [m for m in results['recommended'] if m not in ('http', 'https', 'httpsmp')]
         if 'h2' not in results['recommended']:
             results['recommended'].insert(0, 'h2')
+        if 'grpcmp' not in results['recommended']:
+            results['recommended'].append('grpcmp')
 
     # Default recommendation if nothing detected
     if not results['recommended']:
-        results['recommended'] = ['http', 'udp']
+        results['recommended'] = ['raw', 'udp', 'syn']
 
     return results
 
@@ -1386,7 +1386,7 @@ def main():
         print(f"[auto] using: {', '.join(auto_modes)}", file=sys.stderr)
         args.mode = ','.join(auto_modes)
         # Set per-mode optimal connections for auto
-        _AUTO_CONNS = {'http': 200, 'raw': 1, 'https': 50, 'h2': 80, 'grpc': 50, 'udp': 1, 'quic': 1, 'syn': 10, 'rst': 4, 'tcp': 1}
+        _AUTO_CONNS = {'http': 200, 'raw': 1, 'https': 50, 'httpsmp': 1, 'h2': 300, 'grpc': 50, 'grpcmp': 1, 'udp': 1, 'quic': 1, 'syn': 10, 'rst': 1, 'tcp': 1, 'wsm': 1}
         auto_conn_parts = [f"{m}={_AUTO_CONNS.get(m, 50)}" for m in auto_modes]
         if args.conns:
             args.conns = args.conns + ',' + ','.join(auto_conn_parts)
