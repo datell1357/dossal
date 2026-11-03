@@ -1027,13 +1027,14 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
         per_mode = max(1, _UDP_NPROCS[0] // n_l4)
         _UDP_NPROCS[0] = per_mode
     
+    MULTIPROC_MODES = {'udp', 'quic', 'syn', 'rst', 'fin', 'synack', 'tcp', 'raw', 'wsm'}
     for mode in modes:
         worker_fn = WORKERS[mode]
         pl = payload_size if payload_size is not None else DEFAULT_PAYLOADS.get(mode, 0)
         # Per-mode connection count
         eff_conns = mode_conns.get(mode, conns)
-        if mode in ('udp', 'quic') and eff_conns > 1 and mode not in mode_conns:
-            eff_conns = 1  # default: 1 for UDP/QUIC unless explicitly set
+        if mode in MULTIPROC_MODES and eff_conns > 1 and mode not in mode_conns:
+            eff_conns = 1  # multiproc modes: 1 worker (procs controlled by --threads)
         for i in range(eff_conns):
             workers.append(asyncio.create_task(worker_fn(i, url, stats, duration, stop, pl)))
     try:
