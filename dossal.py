@@ -1367,6 +1367,8 @@ def main():
         help="Preset: light(10c), balanced(50c), max(200c). Overrides default 100c.")
     ap.add_argument("--live", action="store_true",
         help="Print RPS/PPS every second during attack")
+    ap.add_argument("--report", default=None, metavar="FILE",
+        help="Generate HTML attack report to FILE")
     ap.add_argument("--threads", type=int, default=None,
         help="Override connection count for UDP/QUIC (default: 1 per mode)")
     args = ap.parse_args()
@@ -1473,6 +1475,49 @@ def main():
 
     report = asyncio.run(_run_all())
     print(json.dumps(report, indent=2))
+    if args.report:
+        _generate_report(args.report, report, args)
+
+def _generate_report(path, report, args):
+    """Generate an HTML attack report."""
+    import datetime
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rps = report.get("rps", 0)
+    pps = report.get("pps", 0)
+    conns = report.get("connections_made", 0)
+    errors = report.get("errors", 0)
+    duration = report.get("duration_s", 0)
+    url = report.get("url", "?")
+    ver = report.get("version", "?")
+    modes = ", ".join(report.get("modes", []))
+    byts = report.get("bytes", 0)
+    bps = report.get("bps", 0)
+    html = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<title>dossal Report</title><style>"
+        "body{font-family:system-ui;max-width:800px;margin:40px auto;padding:0 20px;background:#1a1a2e;color:#eee}"
+        "h1{color:#e94560}.card{background:#16213e;border-radius:12px;padding:20px;margin:16px 0}"
+        ".stat{display:inline-block;margin-right:30px}.val{font-size:2em;font-weight:bold;color:#fff;background:#e94560;padding:4px 12px;border-radius:8px}"
+        "table{width:100%;border-collapse:collapse}th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #333}th{color:#e94560}"
+        "</style></head><body>"
+        "<h1>\u26a1 dossal Attack Report</h1>"
+        "<div class='card'>"
+        f"<div class='stat'><div class='val'>{rps:,.0f}</div><div>RPS</div></div>"
+        f"<div class='stat'><div class='val'>{pps:,.0f}</div><div>PPS</div></div>"
+        f"<div class='stat'><div class='val'>{conns:,.0f}</div><div>Conns</div></div>"
+        f"<div class='stat'><div class='val'>{errors:,.0f}</div><div>Errors</div></div>"
+        f"<div class='stat'><div class='val'>{duration}s</div><div>Duration</div></div>"
+        "</div>"
+        f"<div class='card'><h3>Modes</h3><p>{modes}</p></div>"
+        f"<div class='card'><h3>Details</h3>"
+        f"<p>Target: <code>{url}</code></p>"
+        f"<p>Version: {ver}</p><p>Time: {ts}</p>"
+        f"<p>Bytes: {byts:,}</p><p>BPS: {bps:,.0f}</p></div>"
+        "</body></html>"
+    )
+    with open(path, "w") as f:
+        f.write(html)
+    print(f"\nReport: {path}")
 
 if __name__ == "__main__":
     main()
