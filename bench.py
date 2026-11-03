@@ -54,7 +54,12 @@ def main():
     results = []
     for i, test in enumerate(TESTS):
         if i > 0:
-            time.sleep(1)  # let victim drain
+            mode = test[0]
+            # Longer pause before L7 modes (they follow the heavy raw/http)
+            if mode in ('https', 'h2', 'grpc'):
+                time.sleep(3)
+            else:
+                time.sleep(1)
         mode, url, conns, dur = test[0], test[1], test[2], test[3]
         extra = test[4] if len(test) > 4 else None
         result = run_mode(mode, url, conns, dur, extra)
