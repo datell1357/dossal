@@ -17,17 +17,18 @@ DOSSAL = os.path.join(LAB, 'dossal.py')
 
 # Mode configs: (mode, url, connections, duration)
 TESTS = [
-    # mode, url, connections, duration — tuned to measured optima
+    # L4 modes first (fresh victim), then L7
+    ('syn',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),  # multiproc SYN
+    ('rst',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),  # 61k conns (8 procs)
+    ('tcp',       'tcp://127.0.0.1:8080',       10, 2, {'threads': 8}),  # 9.4k pkts (8 procs)
+    ('quic',      'udp://127.0.0.1:4443',      1, 2, {'threads': 8}),  # 294k PPS (8 procs)
+    ('udp',         'udp://127.0.0.1:9999',     1, 2, {'threads': 8}),  # 289k PPS (8 procs)
+    # L7 modes (after L4)
     ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 8}),  # 59k RPS (8 procs)
     ('http',      'http://127.0.0.1:8080',     400, 2),   # asyncio HTTP (400c)
     ('https',     'https://127.0.0.1:8443',    50, 2),    # 20k RPS
     ('h2',        'https://127.0.0.1:8444',    120, 2),   # 34k RPS at 120c (v3.4)
     ('grpc',      'https://127.0.0.1:50051/',  80, 2),    # 2,520 RPS at 80c (v3.8)
-    ('quic',      'udp://127.0.0.1:4443',      1, 2, {'threads': 8}),  # 294k PPS (8 procs)
-    ('udp',         'udp://127.0.0.1:9999',     1, 2, {'threads': 8}),  # 289k PPS (8 procs)
-    ('syn',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),  # multiproc SYN
-    ('rst',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),  # 61k conns (8 procs, fast timeout)
-    ('tcp',       'tcp://127.0.0.1:8080',       10, 2, {'threads': 8}),  # 9.4k pkts (8 procs)
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
     ('wsm',       'ws://127.0.0.1:8080',        1, 2, {'threads': 4}),  # WS multiproc
 ]
