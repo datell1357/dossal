@@ -24,7 +24,7 @@ TESTS = [
     ('quic',      'udp://127.0.0.1:4443',      1, 2, {'threads': 8}),  # 294k PPS (8 procs)
     ('udp',         'udp://127.0.0.1:9999',     1, 2, {'threads': 8}),  # 289k PPS (8 procs)
     # L7 modes (after L4)
-    ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 8}),  # 59k RPS (8 procs)
+    ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 12}),  # 88k RPS (12 procs)
     ('http',      'http://127.0.0.1:8080',     400, 2),   # asyncio HTTP (400c)
     ('httpsmp',   'https://127.0.0.1:8443',    1, 5, {'threads': 8}),  # 27.8k RPS (8p, 5s)
     ('h2',        'https://127.0.0.1:8444',    300, 2),   # 37k RPS at 300c (v3.15)
