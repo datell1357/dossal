@@ -994,7 +994,11 @@ def _mp_fin_flood(args_tuple):
         finally:
             if s:
                 try:
-                    s.close()  # graceful → FIN
+                    s.shutdown(socket.SHUT_WR)  # send FIN, don't wait
+                except Exception:
+                    pass
+                try:
+                    s.close()
                 except Exception:
                     pass
     return conns, errors
