@@ -91,6 +91,7 @@ class Stats:
           "requests":self.requests,"rps":round(self.rps(dur),2),
           "bytes":self.bytes,"bps":round(self.bps(dur),2),
           "packets":self.packets,"pps":round(self.pps(dur),2),
+          "ws_messages":self.ws_msgs,
           "connections_made":self.conns,
           "errors":self.errors
         }
@@ -126,6 +127,17 @@ def parse_tcp(u):
 
 def parse_udp(u):
     return _host_port(u)
+
+def parse_ws(u):
+    """Parse ws:// or wss:// URL."""
+    from urllib.parse import urlparse
+    host, port = _host_port(u)
+    p = urlparse(u)
+    if p.scheme == 'wss':
+        port = 443 if not p.port else p.port
+    else:
+        port = 80 if not p.port else p.port
+    return host, port, p.path or "/"
 
 def parse_ip_port(u):
     return _host_port(u)
@@ -770,14 +782,42 @@ def _mp_ws_flood(args_tuple):
         masked_payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
         frame = frame_header + mask + masked_payload
         frame_size = len(frame)
-        # Send frames in tight loop
+        # Send frames with periodic recv(discard) to keep TCP flow
         end = _time.time() + duration
+        s.setblocking(False)
+        import select as _select
+        n = 0
         while _time.time() < end:
             try:
-                s.send(frame)
-                msgs += 1
+                # sendall in non-blocking mode: retry on BlockingIOError
+                off = 0
+                while off < frame_size:
+                    try:
+                        off += s.send(frame[off:])
+                    except BlockingIOError:
+                        # Wait for writable
+                        _w, _, _ = _select.select([], [s], [], 0.01)
+                        if not _w:
+                            break
+                if off >= frame_size:
+                    msgs += 1
+            except (BrokenPipeError, ConnectionResetError):
+                break
             except Exception:
                 break
+            n += 1
+            if n % 64 == 0:
+                # Drain receive buffer
+                try:
+                    while True:
+                        _r, _, _ = _select.select([s], [], [], 0)
+                        if _r:
+                            if not s.recv(4096):
+                                break
+                        else:
+                            break
+                except Exception:
+                    break
         s.close()
     except Exception:
         errors += 1
@@ -797,11 +837,15 @@ async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
     results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
         results = [(0, 0)] * n_procs
+        print(f"[wsm] pool timeout", file=sys.stderr)
     
+    total_msgs = 0
     for msgs, errors in results:
         stats.ws_msgs += msgs
         stats.errors += errors
+        total_msgs += msgs
     stats.conns += n_procs
+    print(f"[wsm] {n_procs} procs, {total_msgs} msgs", file=sys.stderr)
 
 # ── SYN flood: connect only, never read ──────────────────────────
 def _mp_syn_flood(args_tuple):
@@ -1254,8 +1298,8 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
         for i in range(eff_conns):
             workers.append(asyncio.create_task(worker_fn(i, url, stats, duration, stop, pl)))
     try:
-        await asyncio.wait_for(asyncio.gather(*workers, return_exceptions=True), timeout=duration + 2)
-    except asyncio.TimeoutError:
+        await asyncio.gather(*workers, return_exceptions=True)
+    except Exception:
         pass
     stop.set()
     if not task.done():
