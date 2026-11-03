@@ -25,10 +25,11 @@ TESTS = [
     ('grpc',      'https://127.0.0.1:50051/',  80, 2),    # 2,520 RPS at 80c (v3.8)
     ('quic',      'udp://127.0.0.1:4443',      1, 2, {'threads': 8}),  # 294k PPS (8 procs)
     ('udp',         'udp://127.0.0.1:9999',     1, 2, {'threads': 8}),  # 289k PPS (8 procs)
-    ('syn',       'tcp://127.0.0.1:8080',      10, 2),    # 13k conns
-    ('rst',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 4}),  # 44k conns (4 procs)
+    ('syn',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),  # multiproc SYN
+    ('rst',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 4}),  # 52k conns (4 procs)
     ('tcp',       'tcp://127.0.0.1:8080',       10, 2, {'threads': 8}),  # 9.4k pkts (8 procs)
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
+    ('wsm',       'ws://127.0.0.1:8080',        1, 2, {'threads': 4}),  # WS multiproc
 ]
 
 def run_mode(mode, url, conns, dur, extra=None):
@@ -50,7 +51,9 @@ def run_mode(mode, url, conns, dur, extra=None):
 def main():
     t0 = time.time()
     results = []
-    for test in TESTS:
+    for i, test in enumerate(TESTS):
+        if i > 0:
+            time.sleep(1)  # let victim drain
         mode, url, conns, dur = test[0], test[1], test[2], test[3]
         extra = test[4] if len(test) > 4 else None
         result = run_mode(mode, url, conns, dur, extra)
