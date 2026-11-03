@@ -1235,10 +1235,11 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
     task = asyncio.create_task(finish())
     workers = []
     # Split process budget among L4 multiproc modes
-    l4_modes = [m for m in modes if m in ('udp', 'quic', 'rst', 'tcp', 'raw')]
+    MULTIPROC_ALL = {'udp', 'quic', 'syn', 'rst', 'fin', 'synack', 'tcp', 'raw', 'wsm', 'grpcmp', 'httpsmp'}
+    l4_modes = [m for m in modes if m in MULTIPROC_ALL]
     n_l4 = len(l4_modes)
     if n_l4 > 1:
-        # Distribute _UDP_NPROCS across L4 modes
+        # Distribute _UDP_NPROCS across multiproc modes
         per_mode = max(1, _UDP_NPROCS[0] // n_l4)
         _UDP_NPROCS[0] = per_mode
     
