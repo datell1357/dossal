@@ -50,10 +50,11 @@ Options:
   --auto               Auto-detect protocol + include L4 modes
 ```
 
-## Attack modes (16)
+## Attack modes (17)
 | Mode | Layer | Mechanism | Measured (local) |
 |---|---|---|---:|
-| `http` | L7 | HTTP/1.1 keep-alive flood (asyncio) | **35-98k RPS** (400c) |
+| `https` | L7 | HTTPS/1.1 keep-alive flood (asyncio) | **27,774 RPS** (50c) |
+| `httpsmp` | L7 | HTTPS/1.1 raw socket flood (multiproc) | **27,825 RPS** (8p) |
 | `raw` | L7 | HTTP/1.1 raw socket flood (multiproc) | **59k RPS** (8p) |
 | `https` | L7 | TLS 1.3 keep-alive flood | **20,676 RPS** |
 | `h2` | L7 | HTTP/2 multiplexed flood (BATCH=32) | **30,288 RPS** (80c) |
