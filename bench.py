@@ -26,7 +26,7 @@ TESTS = [
     ('quic',      'udp://127.0.0.1:4443',      1, 2, {'threads': 8}),  # 294k PPS (8 procs)
     ('udp',         'udp://127.0.0.1:9999',     1, 2, {'threads': 8}),  # 289k PPS (8 procs)
     ('syn',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),  # multiproc SYN
-    ('rst',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 4}),  # 52k conns (4 procs)
+    ('rst',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),  # 61k conns (8 procs, fast timeout)
     ('tcp',       'tcp://127.0.0.1:8080',       10, 2, {'threads': 8}),  # 9.4k pkts (8 procs)
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
     ('wsm',       'ws://127.0.0.1:8080',        1, 2, {'threads': 4}),  # WS multiproc

@@ -657,7 +657,7 @@ def _mp_syn_flood(args_tuple):
     while _time.time() < end:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(2.0)
+            s.settimeout(0.5)  # fast timeout
             s.connect((host, port))
             s.close()
             conns += 1
@@ -693,7 +693,7 @@ def _mp_synack_flood(args_tuple):
     while _time.time() < end:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(2.0)
+            s.settimeout(0.5)  # fast timeout
             s.connect((host, port))
             s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
             s.close()  # RST
@@ -723,7 +723,7 @@ async def synack_worker(name, url, stats, duration, stop, payload_size=0):
 def _open_rst_sock(host, port):
     """Open TCP conn; close() after send with unread data → RST (no SO_LINGER)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(2.0)
+    s.settimeout(0.5)  # fast timeout
     s.connect((host, port))
     return s
 
@@ -768,7 +768,7 @@ async def rst_worker(name, url, stats, duration, stop, payload_size=1):
 def _open_fin_sock(host, port):
     """Open a TCP connection, drain nothing, close gracefully (FIN)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(2.0)
+    s.settimeout(0.5)  # fast timeout
     s.connect((host, port))
     return s
 
@@ -782,7 +782,7 @@ def _mp_fin_flood(args_tuple):
     while _time.time() < end:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(2.0)
+            s.settimeout(0.5)  # fast timeout
             s.connect((host, port))
             s.close()  # graceful → FIN
             conns += 1
