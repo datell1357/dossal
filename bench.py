@@ -49,7 +49,22 @@ def run_mode(mode, url, conns, dur, extra=None):
         return {'mode': mode, 'rps': 0, 'packets': 0, 'connections_made': 0,
                 'errors': 1, '_err': str(e)}
 
+def restart_node_victim():
+    """Restart node-victim for a clean bench run."""
+    try:
+        # Kill existing
+        subprocess.run(['pkill', '-f', 'node-victim/victim.js'],
+                      capture_output=True, timeout=5)
+        time.sleep(1)
+        # Start fresh
+        subprocess.Popen(['node', os.path.join(LAB, 'node-victim', 'victim.js')],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(2)
+    except Exception:
+        pass
+
 def main():
+    restart_node_victim()
     t0 = time.time()
     results = []
     for i, test in enumerate(TESTS):
