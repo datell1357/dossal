@@ -26,7 +26,7 @@ ensure_cert()
 
 def cpu_work():
     x = 0
-    for i in range(10000):
+    for i in range(1000):
         x += i * i
     return x
 

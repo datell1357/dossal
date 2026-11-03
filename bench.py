@@ -27,7 +27,7 @@ TESTS = [
     ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 8}),  # 59k RPS (8 procs)
     ('http',      'http://127.0.0.1:8080',     400, 2),   # asyncio HTTP (400c)
     ('https',     'https://127.0.0.1:8443',    50, 2),    # 20k RPS
-    ('h2',        'https://127.0.0.1:8444',    120, 2),   # 34k RPS at 120c (v3.4)
+    ('h2',        'https://127.0.0.1:8444',    300, 2),   # 37k RPS at 300c (v3.15)
     ('grpc',      'https://127.0.0.1:50051/',  80, 2),    # 2,520 RPS at 80c (v3.8)
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
     ('wsm',       'ws://127.0.0.1:8080',        1, 2, {'threads': 4}),  # WS multiproc
