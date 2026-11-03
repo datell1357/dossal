@@ -64,7 +64,8 @@ Options:
 | `syn` | L4 | TCP connect-only (SYN flood) | **11,000+ conns/2s** |
 | `rst` | L4 | TCP RST flood (multiproc) | **55,000 conns/2s** (4p) |
 | `fin` | L4 | TCP FIN flood (graceful close) | 1,500+ conns/2s |
-| `websocket` | L7 | WS upgrade + frame flood | — |
+| `websocket` | L7 | WS upgrade + frame flood (asyncio) | — |
+| `wsm` | L7 | WS frame flood (multiproc) | raw socket + WS masking |
 | `slowloris` | L7 | Slow HTTP header drip | connection holding |
 | `synack` | L4 | TCP connect + RST (ACK flood) | 461 conns/2s |
 
