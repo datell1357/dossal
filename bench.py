@@ -26,7 +26,7 @@ TESTS = [
     # L7 modes (after L4)
     ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 8}),  # 59k RPS (8 procs)
     ('http',      'http://127.0.0.1:8080',     400, 2),   # asyncio HTTP (400c)
-    ('httpsmp',   'https://127.0.0.1:8443',    1, 4, {'threads': 4}),  # 16.5k RPS (4p, 4s)
+    ('httpsmp',   'https://127.0.0.1:8443',    1, 3, {'threads': 4}),  # HTTPS multiproc
     ('h2',        'https://127.0.0.1:8444',    300, 2),   # 37k RPS at 300c (v3.15)
     ('grpcmp',    'https://127.0.0.1:50051/',  1, 2, {'threads': 16}),  # 3.7k RPS (16 procs)
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
@@ -41,7 +41,7 @@ def run_mode(mode, url, conns, dur, extra=None):
         for k, v in extra.items():
             cmd.extend([f'--{k}', str(v)])
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=dur + 15)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=dur + 25)
         out = r.stdout.strip()
         js = out[out.find('{'):]
         return json.loads(js)

