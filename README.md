@@ -50,7 +50,7 @@ Options:
   --auto               Auto-detect protocol + include L4 modes
 ```
 
-## Attack modes (14)
+## Attack modes (15)
 | Mode | Layer | Mechanism | Measured (local) |
 |---|---|---|---:|
 | `http` | L7 | HTTP/1.1 keep-alive flood (asyncio) | **35-98k RPS** (400c) |
