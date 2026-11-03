@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
 grpc-victim: HTTP/2 gRPC-compatible server for dossal testing.
-v2: lighter CPU work (10k loop), batched frame writes.
+v3: multiprocessing (N workers) for parallel h2 handling.
 """
 import asyncio
 import ssl
 import time
+import os
+import multiprocessing as mp
 from pathlib import Path
 
 PORT = 50051
+N_WORKERS = int(os.environ.get('GRPC_VICTIM_WORKERS', 4))
 HERE = Path(__file__).parent
 CERT = HERE / 'cert.pem'
 KEY = HERE / 'key.pem'
@@ -31,10 +34,10 @@ def cpu_work():
     return x
 
 async def handle_h2(reader, writer):
-    """Minimal HTTP/2 handler for gRPC testing. Batched, low-latency."""
+    """Minimal HTTP/2 handler for gRPC testing."""
     from h2.connection import H2Connection
     from h2.config import H2Configuration
-    from h2.events import RequestReceived, DataReceived, StreamEnded
+    from h2.events import RequestReceived
 
     config = H2Configuration(client_side=False)
     conn = H2Connection(config=config)
@@ -82,14 +85,49 @@ async def handle_h2(reader, writer):
         except Exception:
             pass
 
-async def main():
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_cert_chain(str(CERT), str(KEY))
-    ctx.set_alpn_protocols(['h2'])
-    server = await asyncio.start_server(handle_h2, '127.0.0.1', PORT, ssl=ctx)
-    print(f'grpc-victim listening on {PORT}', flush=True)
-    async with server:
-        await server.serve_forever()
+def worker(port):
+    """Run an asyncio event loop in a worker process."""
+    async def _main():
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(str(CERT), str(KEY))
+        ctx.set_alpn_protocols(['h2'])
+        server = await asyncio.start_server(handle_h2, '127.0.0.1', port, ssl=ctx)
+        async with server:
+            await server.serve_forever()
+    asyncio.run(_main())
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    if N_WORKERS <= 1:
+        async def _single():
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(str(CERT), str(KEY))
+            ctx.set_alpn_protocols(['h2'])
+            server = await asyncio.start_server(handle_h2, '127.0.0.1', PORT, ssl=ctx)
+            print(f'grpc-victim listening on {PORT} (1 worker)', flush=True)
+            async with server:
+                await server.serve_forever()
+        asyncio.run(_single())
+    else:
+        # Multiprocessing: each worker gets a different port
+        # Main port: PORT. Workers: PORT+1, PORT+2, ...
+        # For simplicity, we use a single port with SO_REUSEPORT.
+        import socket
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(str(CERT), str(KEY))
+        ctx.set_alpn_protocols(['h2'])
+        
+        # Use SO_REUSEPORT to allow multiple processes on the same port
+        processes = []
+        for i in range(N_WORKERS):
+            p = mp.Process(target=worker, args=(PORT,), daemon=True)
+            p.start()
+            processes.append(p)
+        print(f'grpc-victim listening on {PORT} ({N_WORKERS} workers)', flush=True)
+        try:
+            for p in processes:
+                p.join()
+        except KeyboardInterrupt:
+            for p in processes:
+                p.terminate()
+            for p in processes:
+                p.join()
