@@ -63,8 +63,31 @@ def restart_node_victim():
     except Exception:
         pass
 
+def restart_cf_sim():
+    try:
+        subprocess.run(['pkill', '-f', 'cf-sim/server.py'], capture_output=True, timeout=5)
+        time.sleep(1)
+        subprocess.Popen([PY, os.path.join(LAB, 'cf-sim', 'server.py')],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(3)
+    except Exception:
+        pass
+
+def restart_grpc_victim():
+    try:
+        subprocess.run(['pkill', '-f', 'grpc-victim/victim.py'], capture_output=True, timeout=5)
+        time.sleep(1)
+        env = dict(os.environ, GRPC_VICTIM_WORKERS='2')
+        subprocess.Popen([PY, os.path.join(LAB, 'grpc-victim', 'victim.py')],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+        time.sleep(3)
+    except Exception:
+        pass
+
 def main():
     restart_node_victim()
+    restart_cf_sim()
+    restart_grpc_victim()
     t0 = time.time()
     results = []
     for i, test in enumerate(TESTS):
