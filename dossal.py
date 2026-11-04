@@ -1300,8 +1300,8 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
         for i in range(eff_conns):
             workers.append(asyncio.create_task(worker_fn(i, url, stats, duration, stop, pl)))
     try:
-        await asyncio.gather(*workers, return_exceptions=True)
-    except Exception:
+        await asyncio.wait_for(asyncio.gather(*workers, return_exceptions=True), timeout=duration + 20)
+    except (asyncio.TimeoutError, Exception):
         pass
     stop.set()
     if not task.done():
