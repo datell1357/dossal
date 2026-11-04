@@ -1391,9 +1391,30 @@ def auto_probe(url):
     return results
 
 def main():
-    ap = argparse.ArgumentParser(description="dossal v" + VERSION + " — comprehensive DoS stress engine")
+    ap = argparse.ArgumentParser(
+        description="dossal v" + VERSION + " — comprehensive DoS stress engine",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+examples:
+  # Single mode
+  dossal --mode raw --url http://target:8080 --threads 8 --duration 30
+
+  # Auto-detect + optimal modes
+  dossal --auto --url https://target:443 --duration 30 --live
+
+  # Combo presets
+  dossal --combo web --url http://target:8080 --duration 30
+  dossal --combo tls --url https://target:443 --duration 30
+  dossal --combo proto --url https://target:50051 --duration 30
+
+  # Multi-mode with per-mode tuning
+  dossal --mode raw,udp,syn --url http://target:8080 --threads 12 --duration 30
+
+  # With HTML report + impact scoring
+  dossal --mode raw --url http://target:8080 --duration 10 --report out.html --impact
+""")
     ap.add_argument("--mode", default="http",
-        help="Comma-separated modes: http,https,raw,websocket,wsm,tcp,udp,h2,grpc,quic,syn,synack,rst,fin,slowloris")
+        help="Comma-separated modes: http,https,httpsmp,raw,h2,grpc,grpcmp,quic,udp,tcp,syn,synack,rst,fin,websocket,wsm,slowloris")
     ap.add_argument("--auto", action="store_true",
         help="Auto-detect target protocol and select optimal modes")
     ap.add_argument("--combo", default=None,
