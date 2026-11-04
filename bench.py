@@ -93,7 +93,12 @@ def main():
     for i, test in enumerate(TESTS):
         if i > 0:
             mode = test[0]
-            if mode in ('https', 'httpsmp', 'h2', 'grpc', 'grpcmp'):
+            if mode == 'raw':
+                # L4 modes hammered node-victim; restart for clean L7
+                restart_node_victim()
+                time.sleep(1)
+            elif mode in ('https', 'httpsmp', 'h2', 'grpc', 'grpcmp'):
+                # cf-sim recovered from raw/http
                 time.sleep(3)
             else:
                 time.sleep(1)

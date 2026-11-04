@@ -875,12 +875,17 @@ def _mp_syn_flood(args_tuple):
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(0.5)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except (AttributeError, OSError):
+                pass
             s.connect((host, port))
             conns += 1
         except (ConnectionRefusedError, socket.timeout, OSError) as e:
             if isinstance(e, OSError) and e.errno not in (
                 _errno.ECONNREFUSED, _errno.ETIMEDOUT,
-                _errno.EAGAIN, _errno.ECONNRESET
+                _errno.EAGAIN, _errno.ECONNRESET,
+                getattr(_errno, 'EADDRNOTAVAIL', _errno.EADDRNOTAVAIL)
             ):
                 errors += 1
         finally:
@@ -1033,6 +1038,7 @@ def _mp_fin_flood(args_tuple):
     import errno as _errno
     conns = 0
     errors = 0
+    err_types = {}
     end = _time.time() + duration
     while _time.time() < end:
         s = None
@@ -1040,14 +1046,20 @@ def _mp_fin_flood(args_tuple):
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(0.5)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except (AttributeError, OSError):
+                pass
             s.connect((host, port))
             conns += 1
         except (ConnectionRefusedError, socket.timeout, OSError) as e:
             if isinstance(e, OSError) and e.errno not in (
                 _errno.ECONNREFUSED, _errno.ETIMEDOUT,
-                _errno.EAGAIN, _errno.ECONNRESET
+                _errno.EAGAIN, _errno.ECONNRESET,
+                getattr(_errno, 'EADDRNOTAVAIL', _errno.EADDRNOTAVAIL)
             ):
                 errors += 1
+                err_types[getattr(e, 'errno', 'unknown')] = err_types.get(getattr(e, 'errno', 'unknown'), 0) + 1
         finally:
             if s:
                 try:
