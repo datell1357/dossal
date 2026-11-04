@@ -1516,6 +1516,7 @@ def main():
                     elapsed = now - _live_start
                     remaining = max(0, args.duration - int(elapsed))
                     parts = [f"[{remaining}s] RPS={rps:,.0f}"]
+                    if stats.ws_msgs: parts.append(f"WS={stats.ws_msgs:,}")
                     if stats.packets: parts.append(f"PPS={pps:,.0f}")
                     if stats.conns: parts.append(f"CONNS={stats.conns}")
                     parts.append(f"ERR={stats.errors}")
