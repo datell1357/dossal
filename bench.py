@@ -30,7 +30,7 @@ TESTS = [
     ('h2',        'https://127.0.0.1:8444',    300, 2),   # 37k RPS at 300c (v3.15)
     ('grpcmp',    'https://127.0.0.1:50051/',  1, 2, {'threads': 16}),  # 3.7k RPS (16 procs)
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
-    ('wsm',       'ws://127.0.0.1:8080',        1, 2, {'threads': 4}),  # WS multiproc
+    ('wsm',       'ws://127.0.0.1:8090',        1, 2, {'threads': 4}),  # WS multiproc (ws-victim)
 ]
 
 def run_mode(mode, url, conns, dur, extra=None):
@@ -131,6 +131,7 @@ def main():
         total += s.get('rps', 0) / 1000  # RPS contribution
         total += s.get('packets', 0) / 100000  # pps contribution
         total += s.get('connections_made', 0) / 1000  # conn contribution
+        total += s.get('ws_messages', 0) / 10000  # ws msg contribution (617k = 61.7 pts)
     total += impact_score  # impact contribution
     total = round(total, 1)
 
