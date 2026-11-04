@@ -93,8 +93,7 @@ def main():
     for i, test in enumerate(TESTS):
         if i > 0:
             mode = test[0]
-            # Longer pause before L7 modes (they follow the heavy raw/http)
-            if mode in ('https', 'h2', 'grpc'):
+            if mode in ('https', 'httpsmp', 'h2', 'grpc', 'grpcmp'):
                 time.sleep(3)
             else:
                 time.sleep(1)
