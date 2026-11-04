@@ -1396,6 +1396,9 @@ def main():
         help="Comma-separated modes: http,https,raw,websocket,wsm,tcp,udp,h2,grpc,quic,syn,synack,rst,fin,slowloris")
     ap.add_argument("--auto", action="store_true",
         help="Auto-detect target protocol and select optimal modes")
+    ap.add_argument("--combo", default=None,
+        choices=['web', 'full', 'tls', 'proto'],
+        help="Preset mode combo: web(raw+udp+syn), full(+rst), tls(httpsmp+h2+udp), proto(grpcmp+h2+udp)")
     ap.add_argument("--url", required=True)
     ap.add_argument("--connections", type=int, default=100,
         help="Connections per mode (default: 100)")
@@ -1418,6 +1421,17 @@ def main():
     args = ap.parse_args()
 
     # Auto mode: probe target + always include L4 for max destruction
+    # Combo presets
+    COMBOS = {
+        'web': 'raw,udp,syn',
+        'full': 'raw,udp,syn,rst',
+        'tls': 'httpsmp,h2,udp',
+        'proto': 'grpcmp,h2,udp',
+    }
+    if args.combo:
+        args.mode = COMBOS[args.combo]
+        print(f"[combo] {args.combo} → {args.mode}", file=sys.stderr)
+
     if args.auto:
         probe = auto_probe(args.url)
         print(f"[auto] target: {probe['host']}:{probe['port']} ({probe['scheme']})", file=sys.stderr)
