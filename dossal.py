@@ -305,13 +305,22 @@ async def ws_worker(name, url, stats, duration, stop, payload_size=128):
            f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
            f"Sec-WebSocket-Version: 13\r\n\r\n")
     writer.write(req.encode()); await writer.drain()
-    handshake = await asyncio.wait_for(reader.read(8192), timeout=1.0)
+    try:
+        handshake = await asyncio.wait_for(reader.read(8192), timeout=0.5)
+    except asyncio.TimeoutError:
+        stats.errors += 1
+        writer.close()
+        return
     if b"101" not in handshake:
         stats.errors += 1
         writer.close(); return
     stats.conns += 1
     payload = b"x" * payload_size
+    import time as _time
+    _ws_start = _time.time()
     while not stop.is_set():
+        if _time.time() - _ws_start > duration:
+            break
         try:
             mask = random.randbytes(4)
             masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
@@ -325,13 +334,15 @@ async def ws_worker(name, url, stats, duration, stop, payload_size=128):
             await asyncio.wait_for(writer.drain(), timeout=0.1)
             stats.ws_msgs += 1
             stats.bytes += len(header) + len(masked)
-        except (asyncio.TimeoutError, Exception):
+        except asyncio.TimeoutError:
+            break
+        except Exception:
             stats.errors += 1
             break
-    if writer.transport:
-        writer.transport.close()
     try:
-        await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
+        writer.transport.set_write_buffer_limits(high=65536)
+        writer.close()
+        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
     except Exception:
         pass
 
@@ -1300,7 +1311,7 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
         for i in range(eff_conns):
             workers.append(asyncio.create_task(worker_fn(i, url, stats, duration, stop, pl)))
     try:
-        await asyncio.wait_for(asyncio.gather(*workers, return_exceptions=True), timeout=duration + 20)
+        await asyncio.wait_for(asyncio.gather(*workers, return_exceptions=True), timeout=duration + 5)
     except (asyncio.TimeoutError, Exception):
         pass
     stop.set()
