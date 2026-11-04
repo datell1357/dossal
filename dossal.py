@@ -444,7 +444,8 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
         ('user-agent', f'dossal/{VERSION}'),
     ]
     # Batched h2: send N requests, then drain responses
-    BATCH = 32
+    import os as _os
+    BATCH = int(_os.environ.get('DOSSAL_H2_BATCH', '32'))
     error = None
     while not stop.is_set():
         try:
