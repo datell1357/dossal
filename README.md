@@ -65,14 +65,14 @@ Options:
 ## Attack modes (17)
 | Mode | Layer | Mechanism | Measured (local, fresh) |
 |---|---|---|---:|
-| `raw` | L7 | HTTP/1.1 raw socket flood (multiproc) | **124,624 RPS** (8p) |
+| `raw` | L7 | HTTP/1.1 raw socket flood (multiproc) | **124,624 RPS** (16p) |
 | `http` | L7 | HTTP/1.1 keep-alive flood (asyncio) | **75,658 RPS** (400c) |
 | `h2` | L7 | HTTP/2 multiplexed flood (BATCH=32) | **37,248 RPS** (300c) |
 | `https` | L7 | TLS 1.3 keep-alive flood (asyncio) | **34,652 RPS** (200c) |
 | `httpsmp` | L7 | TLS 1.3 raw socket flood (multiproc) | **27,825 RPS** (8p) |
 | `grpcmp` | L7 | gRPC raw socket flood (multiproc) | **11,089 RPS** (16p) |
 | `grpc` | L7 | gRPC flood (asyncio) | **1,050 RPS** (100c) |
-| `wsm` | L7 | WS frame flood (multiproc) | **617,622 msg/s** (4p) |
+| `wsm` | L7 | WS frame flood (multiproc) | **771k msg/s** (4p) |
 | `websocket` | L7 | WS upgrade + frame flood (asyncio) | — |
 | `slowloris` | L7 | Slow HTTP header drip | connection holding |
 | `udp` | L4 | Raw UDP datagram flood (multiproc) | **368,000 PPS** (8p) |
@@ -86,7 +86,7 @@ Options:
 ## Comparison (dossal vs open source)
 | Tool | raw/HTTP RPS | HTTPS RPS | H2 RPS | gRPC RPS | UDP/QUIC PPS | Modes |
 |---|---:|---:|---:|---:|---:|---:|
-| **dossal v3.16** | **124k** | **35k** | **37k** | **11k** | **378k** | **17** |
+| **dossal v3.16** | **124k** | **35k** | **40k** | **11k** | **378k** | **17** |
 | LOIC | ~45k | N/A | N/A | N/A | N/A | 2 |
 | HOIC | ~50k | ~30k | N/A | N/A | N/A | 3 |
 | hping3 | ~15k | N/A | N/A | N/A | ~15k | 4 |
@@ -185,7 +185,7 @@ dossal.py (single file, Python asyncio + multiprocessing)
 - **Multi-mode**: CPU budget split among multiproc modes
 
 ## Bench results (v3.16, local only)
-**Bench score: 379.7 PEAK** | 5-run avg: 250.5
+**Bench score: 475.3 PEAK** | 3-run avg: 415.4
 
 | Mode | Target | Conns/Procs | Dur | Result | Errors |
 |---|---|---|---|---|---|
