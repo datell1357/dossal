@@ -322,9 +322,10 @@ async def ws_worker(name, url, stats, duration, stop, payload_size=128):
                 header += struct.pack("!BH", 0x80 | 126, len(payload))
             header += mask
             writer.write(header + masked)
+            await asyncio.wait_for(writer.drain(), timeout=0.1)
             stats.ws_msgs += 1
             stats.bytes += len(header) + len(masked)
-        except Exception:
+        except (asyncio.TimeoutError, Exception):
             stats.errors += 1
             break
     if writer.transport:
