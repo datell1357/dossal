@@ -73,8 +73,8 @@ Options:
 | `grpcmp` | L7 | gRPC raw socket flood (multiproc) | **11,089 RPS** (16p) |
 | `grpc` | L7 | gRPC flood (asyncio) | **1,050 RPS** (100c) |
 | `wsm` | L7 | WS frame flood (multiproc) | **771k msg/s** (4p) |
-| `websocket` | L7 | WS upgrade + frame flood (asyncio) | — |
-| `slowloris` | L7 | Slow HTTP header drip | connection holding |
+| `websocket` | L7 | WS upgrade + frame flood (asyncio) | **187k msg/s** (2c) |
+| `slowloris` | L7 | Slow HTTP header drip | **10 conns held** |
 | `udp` | L4 | Raw UDP datagram flood (multiproc) | **368,000 PPS** (8p) |
 | `quic` | L4 | QUIC/HTTP3 UDP datagram flood (multiproc) | **378,667 PPS** (8p) |
 | `tcp` | L4 | Raw TCP byte flood (multiproc) | **420 pps** (8p) |
