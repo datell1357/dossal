@@ -18,7 +18,7 @@ DOSSAL = os.path.join(LAB, 'dossal.py')
 # Mode configs: (mode, url, connections, duration)
 TESTS = [
     # L7 modes first (fresh victims)
-    ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 16}),
+    ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 24}),  # 24p optimal on 30-core
     ('http',      'http://127.0.0.1:8080',     600, 2),  # 600c optimal (84.9k RPS)
     ('httpsmp',   'https://127.0.0.1:8443',    1, 5, {'threads': 16}),
     ('h2',        'https://127.0.0.1:8444',    600, 2),  # 600c optimal (34.9k RPS)
