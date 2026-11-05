@@ -18,16 +18,17 @@ DOSSAL = os.path.join(LAB, 'dossal.py')
 # Mode configs: (mode, url, connections, duration)
 TESTS = [
     # L7 modes first (fresh victims)
-    ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 8}),
-    ('http',      'http://127.0.0.1:8080',     400, 2),
-    ('httpsmp',   'https://127.0.0.1:8443',    1, 5, {'threads': 8}),
-    ('h2',        'https://127.0.0.1:8444',    300, 2),
+    ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 16}),
+    ('http',      'http://127.0.0.1:8080',     600, 2),  # 600c optimal (84.9k RPS)
+    ('httpsmp',   'https://127.0.0.1:8443',    1, 5, {'threads': 16}),
+    ('h2',        'https://127.0.0.1:8444',    600, 2),  # 600c optimal (34.9k RPS)
     ('grpcmp',    'https://127.0.0.1:50051/',  1, 2, {'threads': 16}),
     ('wsm',       'ws://127.0.0.1:8090',        1, 2, {'threads': 4}),
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
     # L4 modes (after L7)
     ('syn',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),
     ('rst',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),
+    ('fin',       'tcp://127.0.0.1:8080',       10, 2, {'threads': 8}),
     ('tcp',       'tcp://127.0.0.1:8080',       10, 2, {'threads': 8}),
     ('quic',      'udp://127.0.0.1:4443',      1, 2, {'threads': 8}),
     ('udp',         'udp://127.0.0.1:9999',     1, 2, {'threads': 8}),
