@@ -20,7 +20,7 @@ TESTS = [
     # L7 modes first (fresh victims)
     ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 16}),  # 16p optimal in bench (leaves CPU for other modes)
     ('http',      'http://127.0.0.1:8080',     600, 2),  # 600c optimal (84.9k RPS)
-    ('httpsmp',   'https://127.0.0.1:8443',    1, 5, {'threads': 16}),
+    ('httpsmp',   'https://127.0.0.1:8443',    1, 5, {'threads': 16}),  # 16p optimal for bench total
     ('h2',        'https://127.0.0.1:8444',    600, 2),  # 600c optimal (34.9k RPS)
     ('grpcmp',    'https://127.0.0.1:50051/',  1, 2, {'threads': 16}),
     ('wsm',       'ws://127.0.0.1:8090',        1, 2, {'threads': 4}),
