@@ -1063,7 +1063,9 @@ def _mp_fin_flood(args_tuple):
         finally:
             if s:
                 try:
-                    s.shutdown(socket.SHUT_WR)  # send FIN, don't wait
+                    import struct as _st
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                 _st.pack('ii', 1, 0))  # RST on close
                 except Exception:
                     pass
                 try:
