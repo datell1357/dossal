@@ -21,6 +21,15 @@ Targets are local only. JSON stats output. Multi-mode: --mode http,h2,udp
 import asyncio, ssl, socket, json, math, struct, random, time, argparse, signal, sys, base64, os, logging, threading
 from urllib.parse import urlparse
 logging.getLogger('asyncio').setLevel(logging.CRITICAL)
+
+# Platform detection
+import platform
+_IS_WINDOWS = platform.system() == 'Windows'
+if _IS_WINDOWS:
+    import ctypes
+    # Windows IP_HDRINCL (not in Python socket module)
+    IP_HDRINCL = 2
+
 _SRC_IPS = [None]  # type: ignore  # active source IPs (list)
 _BLOCKED_IPS = set()  # IPs that received 429 (blocked by target)
 _SPOOF_MODE = [False]  # True = stealth mode (use spoofed IPs, hide real IP)
