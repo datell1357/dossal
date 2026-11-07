@@ -69,12 +69,17 @@ class DossalGUI:
         ttk.Label(opt_frame, text="Threads:").grid(row=4, column=0, sticky=tk.W, pady=2)
         ttk.Entry(opt_frame, textvariable=self.threads_var, width=10).grid(row=4, column=1, sticky=tk.W, pady=2)
         
+        # Proxy (optional)
+        self.proxy_var = tk.StringVar(value="")
+        ttk.Label(opt_frame, text="Proxy (optional):").grid(row=5, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(opt_frame, textvariable=self.proxy_var, width=40).grid(row=5, column=1, columnspan=2, sticky=tk.EW, pady=2)
+        
         # Mode selection (optional, auto if Fast Mode)
         self.mode_var = tk.StringVar(value="auto")
-        ttk.Label(opt_frame, text="Mode (auto = smart select):").grid(row=5, column=0, sticky=tk.W, pady=2)
+        ttk.Label(opt_frame, text="Mode (auto = smart select):").grid(row=6, column=0, sticky=tk.W, pady=2)
         mode_combo = ttk.Combobox(opt_frame, textvariable=self.mode_var, width=30,
                                     values=['auto', 'raw', 'httpsmp', 'h2', 'udp', 'syn', 'combo'])
-        mode_combo.grid(row=5, column=1, sticky=tk.W, pady=2)
+        mode_combo.grid(row=6, column=1, sticky=tk.W, pady=2)
         
         # Buttons
         btn_frame = ttk.Frame(main)
@@ -85,6 +90,8 @@ class DossalGUI:
         
         self.stop_btn = ttk.Button(btn_frame, text="STOP", command=self.stop_attack, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(btn_frame, text="Simulate (dry-run)", command=self.dry_run).pack(side=tk.LEFT, padx=5)
         
         ttk.Button(btn_frame, text="Save Report", command=self.save_report).pack(side=tk.RIGHT, padx=5)
         
@@ -162,6 +169,10 @@ class DossalGUI:
         if recovery:
             cmd.append('--recovery')
         
+        proxy = self.proxy_var.get().strip()
+        if proxy:
+            cmd.extend(['--proxy', proxy])
+        
         self.running = True
         self.start_time = time.time()
         self.duration = duration
@@ -189,7 +200,7 @@ class DossalGUI:
             proc.wait()
             
             # Parse output
-            output = proc.stdout.read() if proc.stdout else 
+            output = proc.stdout.read() if proc.stdout else ""
             try:
                 js = output[output.find('{'):]
                 data = json.loads(js)
@@ -209,6 +220,36 @@ class DossalGUI:
         self.stop_btn.config(state=tk.DISABLED)
         self.progress.config(value=self.duration)
         self.log("Attack finished")
+    
+    def dry_run(self):
+        """Run simulation without attacking."""
+        url = self.url_var.get().strip()
+        if not url:
+            messagebox.showerror("Error", "Enter a target URL")
+            return
+        
+        cmd = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dossal.py')]
+        cmd.extend(['--url', url, '--dry-run'])
+        
+        if self.stealth_var.get() or self.spoof_var.get():
+            cmd.extend(['--spoof', '100'])
+        if self.stealth_var.get():
+            cmd.append('--stealth')
+        if self.recovery_var.get():
+            cmd.append('--recovery')
+        
+        self.log("Running simulation...")
+        threading.Thread(target=self._run_dry, args=(cmd,), daemon=True).start()
+    
+    def _run_dry(self, cmd):
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            for line in proc.stderr.split('\n'):
+                if line.strip():
+                    self.log(line.strip())
+            self.log("Simulation complete")
+        except Exception as e:
+            self.log(f"Simulation error: {e}")
     
     def stop_attack(self):
         self.log("Stopping...")
