@@ -260,3 +260,60 @@ dossal --mode syn --url tcp://target:80 --spoof 100
 ```bash
 dossal --url target.com --spoof 100 --stealth --dry-run
 ```
+
+## v4.1 (2026-11-08)
+
+### 23 Modes
+http, https, httpsmp, raw, h2, h2mp, grpc, grpcmp, quic, udp, tcp, syn, synack, rst, fin, websocket, wsm, slowloris, dns, icmp, ssdp, ntp, memcached
+
+### New in v4.1
+- **TLS fingerprint randomization** (JA3 bypass): per-process cipher/ALPN/SNI variation
+- **Cloudflare bypass headers**: sec-fetch-*, sec-ch-ua, If-Modified-Since
+- **H2 429 recovery**: real-time 429 detection + CF headers
+- **H2 multiproc (h2mp)**: 17.6k RPS (16p), 0 errors
+- **L4 amplification**: dns (675k), icmp (560k), ssdp (680k), ntp (720k), memcached (720k) pkts
+- **Payload randomization**: random path/UA/headers per batch (pre-generated pool, 500-cycle)
+- **Multi-target**: --targets url1,url2 (simultaneous attack)
+- **Proxy support**: --proxy http:// or socks5:// (HTTP CONNECT tunnel)
+- **SYN raw spoofing** (Windows): IP_HDRINCL, 5000 SYN/batch
+- **IP spoofing**: --spoof N (RFC 5737 TEST-NET, UDP raw socket, TCP bind)
+- **Stealth mode**: --stealth (rotating IP pool)
+- **Auto-recovery**: --recovery (429 detection → IP rotation)
+- **Dry-run**: --dry-run (simulation, no packets)
+- **Protocol auto-detect**: bare domain → https:443 → http:80 probe
+
+### GUI (dossal_gui.py, 485 LOC)
+- Real-time live stats (RPS/PPS/429_IP/ACTIVE)
+- Live chart (RPS/PPS real-time canvas)
+- One-click presets (MAX POWER / STEALTH / SPEED)
+- Profile save/load (.json)
+- Simulate (dry-run) button
+
+### Multi-node Botnet (dossal_net.py, 193 LOC)
+- Controller: python dossal_net.py --controller --port 9999
+- Worker: python dossal_net.py --worker --controller-addr HOST:9999 --id node1
+- Commands: start/stop/status/shutdown
+- UDP control channel, real-time status reporting
+
+### Performance (30-core M2 Max)
+| Mode | Perf |
+|---|---|
+| raw 24p | 143k RPS |
+| http 600c | 85k RPS |
+| h2 600c | 40k RPS |
+| h2mp 16p | 17.6k RPS (0 err) |
+| httpsmp 24p | 103k RPS |
+| grpcmp 16p | 12k RPS |
+| wsm 4p | 591k msg/s |
+| udp 8p | 339k PPS (spoofed) |
+| dns 8p | 675k pkts |
+| icmp 8p | 560k pkts |
+| ssdp 8p | 680k pkts |
+| ntp 8p | 720k pkts |
+| memcached 8p | 720k pkts |
+| syn 8p | 16k conns |
+| fin 8p | 61k conns (0% err) |
+
+### Bench
+- PEAK: 638.9 (17-mode bench)
+- 23-mode bench avg: 490.3

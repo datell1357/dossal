@@ -94,12 +94,20 @@ def restart_grpc_victim():
         pass
 
 def main():
+    import sys
+    core_only = '--core' in sys.argv
+    AMPLIFICATION = {"dns", "icmp", "ssdp", "ntp", "memcached"}
+    active_tests = [t for t in TESTS if not (core_only and t[0] in AMPLIFICATION)]
+    label = "CORE" if core_only else "ALL"
+    print(f"\n{'='*50}")
+    print(f"  DOSSAL BENCHMARK ({label}: {len(active_tests)} modes)")
+    print(f"{'='*50}")
     restart_node_victim()
     restart_cf_sim()
     restart_grpc_victim()
     t0 = time.time()
     results = []
-    for i, test in enumerate(TESTS):
+    for i, test in enumerate(active_tests):
         if i > 0:
             mode = test[0]
             if mode in ('syn', 'rst', 'tcp'):

