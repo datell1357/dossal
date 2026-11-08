@@ -18,6 +18,7 @@ except ImportError:
 class DossalGUI:
     """dossal GUI 메인 클래스 (tkinter)."""
     def __init__(self, root):
+        """dossal GUI 초기화 (tkinter)."""
         self.root = root
         root.title("dossal v4.0 — DoS Attack Tool")
         root.geometry("600x500")
@@ -32,7 +33,7 @@ class DossalGUI:
         self._build_ui()
     
     def _apply_preset(self):
-        """Apply preset to checkboxes."""
+        """인텐시트 프리셋 적용 (light/balanced/max)."""
         preset = self.preset_var.get()
         if preset == 'power':
             self.fast_var.set(True)
@@ -58,6 +59,7 @@ class DossalGUI:
     
     """UI 레이아웃 구성 (tkinter)."""
     def _build_ui(self):
+        """GUI 레이아웃 생성 (모드/옵션/차트/로그)."""
         # Main frame
         main = ttk.Frame(self.root, padding=10)
         main.pack(fill=tk.BOTH, expand=True)
@@ -188,6 +190,7 @@ class DossalGUI:
     
     """로그 메시지 출력."""
     def log(self, msg):
+        """로그 메시지 출력 (타임스탬프 포함)."""
         timestamp = time.strftime("%H:%M:%S")
         self.log_text.insert(tk.END, f"[{timestamp}] {msg}\n")
         self.log_text.see(tk.END)
@@ -195,6 +198,7 @@ class DossalGUI:
     
     """공격 시작 (dossal.py subprocess 실행)."""
     def start_attack(self):
+        """공격 시작 (URL 검증 + 공격 실행)."""
         if self.running:
             return
         
@@ -269,6 +273,7 @@ class DossalGUI:
     
     """공격 백그라운드 실행 + live stats 파싱."""
     def _run_attack(self, cmd):
+        """백그라운드 스레드에서 dossal CLI 실행 + 실시간 스탯 수집."""
         try:
             # Add --live for real-time stats
             cmd = cmd + ['--live']
@@ -324,13 +329,14 @@ class DossalGUI:
     
     """공격 완료 핸들러."""
     def _on_complete(self):
+        """공격 완료 처리 (버튼 리셋 + 리포트 저장)."""
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.progress.config(value=self.duration)
         self.log("Attack finished")
     
     def dry_run(self):
-        """Run simulation without attacking."""
+        """공격 없이 시뮬레이션 (패킷 수/시간/영향력 예측)."""
         url = self.url_var.get().strip()
         if not url:
             messagebox.showerror("Error", "Enter a target URL")
@@ -351,6 +357,7 @@ class DossalGUI:
     
     """Dry-run 백그라운드 실행."""
     def _run_dry(self, cmd):
+        """dry-run 출력 파싱 (백그라운드 스레드)."""
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             for line in proc.stderr.split('\n'):
@@ -362,13 +369,14 @@ class DossalGUI:
     
     """공격 중단 (subprocess terminate)."""
     def stop_attack(self):
+        """공격 중단 (SIGINT + 프로세스 종료)."""
         self.log("Stopping...")
         self.running = False
         # Kill the subprocess (simplified)
         # In production, send SIGTERM or use process group
     
     def _draw_chart(self):
-        """Draw real-time RPS/PPS chart."""
+        """실시간 RPS/PPS 차트 그리기 (60점 윈도우)."""
         # Append new data point
         self._chart_data_rps.append(self.stats.get('rps', 0))
         self._chart_data_pps.append(self.stats.get('packets', 0))
@@ -416,6 +424,7 @@ class DossalGUI:
     
     """실시간 스탯 업데이트 (RPS/PPS/429/ACTIVE)."""
     def _update_stats(self):
+        """실시간 스탯 수집 (RPS/PPS/에러 + 차트/레이블 업데이트)."""
         if not self.running:
             return
         
@@ -441,7 +450,7 @@ class DossalGUI:
         self.root.after(500, self._update_stats)
     
     def save_profile(self):
-        """Save current settings as a profile (.json)."""
+        """현재 설정을 프로파일(.json)로 저장."""
         from tkinter import filedialog
         path = filedialog.asksaveasfilename(defaultextension='.json', filetypes=[("JSON", "*.json")])
         if not path:
@@ -464,7 +473,7 @@ class DossalGUI:
         self.log(f"Profile saved: {path}")
     
     def load_profile(self):
-        """Load settings from a profile (.json)."""
+        """프로파일(.json)에서 설정 불러오기."""
         from tkinter import filedialog
         path = filedialog.askopenfilename(filetypes=[("JSON", "*.json")])
         if not path:
@@ -489,6 +498,7 @@ class DossalGUI:
     
     """공격 리포트 저장 (.json)."""
     def save_report(self):
+        """공격 결과 HTML 리포트 저장."""
         try:
             from tkinter import filedialog
             path = filedialog.asksaveasfilename(defaultextension='.html', filetypes=[("HTML", "*.html")])
@@ -501,6 +511,7 @@ class DossalGUI:
             self.log(f"Report error: {e}")
 
 def main():
+    """dossal_gui 메인 진입점 (tkinter 루프)."""
     root = tk.Tk()
     app = DossalGUI(root)
     root.mainloop()

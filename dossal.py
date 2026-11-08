@@ -177,12 +177,20 @@ def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
 # ── Stats ─────────────────────────────────────────────────────────
 class Stats:
     def __init__(self):
+        """공격 통계 초기화 (요청/바이트/에러/패킷)."""
         self.requests=0; self.bytes=0; self.errors=0; self.opens=0
         self.ws_msgs=0; self.packets=0; self.conns=0
-    def rps(self, dur): return self.requests/dur if dur else 0
-    def bps(self, dur): return self.bytes/dur if dur else 0
-    def pps(self, dur): return self.packets/dur if dur else 0
+    def rps(self, dur):
+        """RPS 계산."""
+        return self.requests/dur if dur else 0
+    def bps(self, dur):
+        """BPS 계산."""
+        return self.bytes/dur if dur else 0
+    def pps(self, dur):
+        """PPS 계산."""
+        return self.packets/dur if dur else 0
     def report(self, modes, url, conns, dur):
+        """공격 결과 딕셔너리 생성 (JSON 출력용)."""
         d = {
           "tool":"dossal","version":VERSION,"modes":modes,"url":url,
           "connections":conns,"duration_s":dur,
@@ -291,6 +299,7 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
     while not stop.is_set():
         try:
             async def _write_read():
+                """요청 쓰기 + 응답 읽기 (동시)."""
                 writer.write(req_bytes)
                 await writer.drain()
                 return await _read_http_response(reader)
@@ -400,7 +409,7 @@ def _mp_https_flood(args_tuple):
     req_counter = 0
     
     def _reconnect_0rtt():
-        """Reconnect using cached session with 0-RTT early data."""
+        """캐시된 TLS 세션으로 재연결 (0-RTT early data)."""
         nonlocal ssock, sent
         try:
             raw = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
@@ -481,6 +490,7 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
             await asyncio.sleep(_rj.uniform(0, _JITTER[0]))
         try:
             async def _write_read():
+                """요청 쓰기 + 응답 읽기 (https/http worker)."""
                 writer.write(req_bytes)
                 await writer.drain()
                 return await _read_http_response(reader)
@@ -746,6 +756,7 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
     # Header pool for H2 (CF bypass: sec-fetch-*, sec-ch-ua)
     import random as _rnd
     def _h2_headers():
+        """H2 헤더 생성 (UA/headers 랜덤)."""
         uas = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
@@ -2173,10 +2184,12 @@ async def _find_pid(port):
 class CpuSampler:
     """프로세스 CPU% 백그라운드 샘플링 (psutil)."""
     def __init__(self, pid):
+        """프로세스 샘플러 초기화."""
         self.pid = pid
         self.samples = []
         self._task = None
     async def start(self):
+        """백그라운드 샘플링 시작 (asyncio task)."""
         import psutil
         try:
             self._proc = psutil.Process(self.pid)
@@ -2186,6 +2199,7 @@ class CpuSampler:
             return
         loop = asyncio.get_event_loop()
         async def _sample():
+            """주기적 CPU/메모리/네트워크 샘플링 (0.2초 간격)."""
             while True:
                 await asyncio.sleep(0.2)
                 if self._proc:
@@ -2193,6 +2207,7 @@ class CpuSampler:
                     self.samples.append(cpu)
         self._task = asyncio.create_task(_sample())
     async def stop(self):
+        """샘플링 중단."""
         if self._task:
             self._task.cancel()
         if self.samples:
@@ -2205,6 +2220,7 @@ async def impact_score(url, stats, duration, sampler=None, base_cpu=0.0):
     host, port = parse_ip_port(url)
 
     def _get_pid():
+        """TCP 연결에서 PID 추출 (lsof)."""
         try:
             out = __import__('subprocess').run(
                 ['lsof', f'-i:{port}', '-t'],
@@ -2215,6 +2231,7 @@ async def impact_score(url, stats, duration, sampler=None, base_cpu=0.0):
             return None
 
     def _sample(pid):
+        """프로세스 CPU/메모리 샘플 (psutil)."""
         import psutil
         try:
             proc = psutil.Process(pid)
@@ -2239,6 +2256,7 @@ async def impact_score(url, stats, duration, sampler=None, base_cpu=0.0):
         base_cpu = 0.0
         # Fallback: quick sample
         def _cpu():
+            """전체 CPU 사용률 샘플."""
             import psutil
             try:
                 p = psutil.Process(victim_pid)
@@ -2274,6 +2292,7 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
         mode_conns = {}
     stop = asyncio.Event()
     async def finish():
+        """지정 시간 후 샘플링 중단."""
         await asyncio.sleep(duration); stop.set()
     task = asyncio.create_task(finish())
     workers = []
@@ -2626,6 +2645,7 @@ examples:
     payload_size = args.payload_size
 
     async def _run_all():
+        """공격 + 모니터링 + 리포트 전체 파이프라인."""
         sampler = None
         baseline_cpu = 0.0
         if args.impact:
@@ -2648,6 +2668,7 @@ examples:
         if args.live:
             _live_start = None
             async def _live_printer():
+                """실시간 RPS/PPS 출력 (1초 간격)."""
                 nonlocal _live_start
                 _live_start = asyncio.get_event_loop().time()
                 last_req, last_pkt = 0, 0

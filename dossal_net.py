@@ -38,6 +38,7 @@ def run_worker(controller_addr, node_id, listen_port=9998):
     
     # Auto-report status every 2 seconds
     def reporter():
+        """워커 상태 2초 간격 출력."""
         while True:
             time.sleep(2)
             try:
@@ -81,6 +82,7 @@ def run_worker(controller_addr, node_id, listen_port=9998):
                 
                 # Read live stats from proc
                 def reader():
+                    """워커 출력 스레드 (dossal stdout 읽기)."""
                     if proc and proc.stdout:
                         for line in proc.stdout:
                             line = line.strip()
@@ -154,6 +156,7 @@ def run_controller_gui(port=9999):
     ttk.Entry(top, textvariable=duration_var, width=5).pack(side=tk.LEFT, padx=5)
     
     def do_start():
+        """GUI START 버튼: 모든 워커에 start 명령 전송."""
         url = url_var.get().strip()
         if not url:
             return
@@ -166,12 +169,14 @@ def run_controller_gui(port=9999):
         log.see(tk.END)
     
     def do_stop():
+        """GUI STOP 버튼: 모든 워커에 stop 명령 전송."""
         for node, (addr, _, _) in workers.items():
             sock.sendto(json.dumps({'cmd': 'stop'}).encode(), addr)
         log.insert(tk.END, f"→ STOP to {len(workers)} workers\n")
         log.see(tk.END)
     
     def do_shutdown():
+        """GUI SHUTDOWN 버튼: 모든 워커 종료."""
         for node, (addr, _, _) in workers.items():
             sock.sendto(json.dumps({'cmd': 'shutdown'}).encode(), addr)
         log.insert(tk.END, f"→ SHUTDOWN to {len(workers)} workers\n")
@@ -198,6 +203,7 @@ def run_controller_gui(port=9999):
     
     # Receive loop
     def receive():
+        """워커 상태/결과 수신 (UDP recvfrom)."""
         try:
             data, addr = sock.recvfrom(65535)
             msg = json.loads(data.decode())
