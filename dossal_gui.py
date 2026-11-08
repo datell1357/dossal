@@ -117,7 +117,7 @@ class DossalGUI:
         self.mode_var = tk.StringVar(value="auto")
         ttk.Label(opt_frame, text="Mode (auto = smart select):").grid(row=7, column=0, sticky=tk.W, pady=2)
         mode_combo = ttk.Combobox(opt_frame, textvariable=self.mode_var, width=30,
-                                    values=['auto', 'raw', 'httpsmp', 'h2', 'udp', 'syn', 'combo', 'full'])
+                                    values=['auto', 'raw', 'httpsmp', 'h2', 'h2mp', 'udp', 'dns', 'icmp', 'syn', 'combo', 'full'])
         mode_combo.grid(row=7, column=1, sticky=tk.W, pady=2)
         
         # Buttons
@@ -132,7 +132,9 @@ class DossalGUI:
         
         ttk.Button(btn_frame, text="Simulate (dry-run)", command=self.dry_run).pack(side=tk.LEFT, padx=5)
         
-        ttk.Button(btn_frame, text="Save Report", command=self.save_report).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Load Profile", command=self.load_profile).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(btn_frame, text="Save Profile", command=self.save_profile).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(btn_frame, text="Save Report", command=self.save_report).pack(side=tk.RIGHT, padx=2)
         
         # Progress bar
         self.progress = ttk.Progressbar(main, orient=tk.HORIZONTAL, length=400, mode='determinate')
@@ -354,6 +356,44 @@ class DossalGUI:
             self.err_label.config(text=f"Err: {self.stats.get('errors', 0):,.0f}{extra}")
         
         self.root.after(500, self._update_stats)
+    
+    def save_profile(self):
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(defaultextension='.json', filetypes=[("JSON", "*.json")])
+        if path:
+            profile = {
+                'url': self.url_var.get(),
+                'duration': self.dur_var.get(),
+                'preset': self.preset_var.get(),
+                'spoof': self.spoof_var.get(),
+                'stealth': self.stealth_var.get(),
+                'recovery': self.recovery_var.get(),
+                'threads': self.threads_var.get(),
+                'proxy': self.proxy_var.get(),
+                'mode': self.mode_var.get(),
+                'targets': self.targets_var.get(),
+            }
+            with open(path, 'w') as f:
+                json.dump(profile, f, indent=2)
+            self.log(f"Profile saved: {path}")
+    
+    def load_profile(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(filetypes=[("JSON", "*.json")])
+        if path:
+            with open(path) as f:
+                profile = json.load(f)
+            self.url_var.set(profile.get('url', ''))
+            self.dur_var.set(str(profile.get('duration', '10')))
+            self.preset_var.set(profile.get('preset', 'power'))
+            self.spoof_var.set(profile.get('spoof', True))
+            self.stealth_var.set(profile.get('stealth', True))
+            self.recovery_var.set(profile.get('recovery', True))
+            self.threads_var.set(str(profile.get('threads', '16')))
+            self.proxy_var.set(profile.get('proxy', ''))
+            self.mode_var.set(profile.get('mode', 'auto'))
+            self.targets_var.set(profile.get('targets', ''))
+            self.log(f"Profile loaded: {path}")
     
     def save_report(self):
         try:
