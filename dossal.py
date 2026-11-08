@@ -50,11 +50,6 @@ def _parse_proxy(proxy_url):
         'pass': p.password,
     }
 
-def _proxy_connect(host, port, timeout=5.0):
-    """프록시를 통해 소켓을 연결. (소켓, 프록시정보) 반환.
-    HTTP 프록시: CONNECT 터널. SOCKS5: 기본 핸드셰이크."""
-    if not _PROXY[0]:
-        return None, None
     
     proxy = _parse_proxy(_PROXY[0])
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -142,13 +137,6 @@ def _get_src_ip(proc_idx, total_procs):
             return active[proc_idx % len(active)]
     return ips[proc_idx % len(ips)] if ips else None
 
-def _mark_blocked(ip):
-    """IP를 차단(429 수신)으로 표시"""
-    if ip and ip not in _BLOCKED_IPS:
-        _BLOCKED_IPS.add(ip)
-        remaining = _active_ip_count()
-        print(f"[recovery] IP {ip} blocked (429), {remaining} IPs remaining", file=sys.stderr)
-
 def _active_ip_count():
     """차단되지 않은 IP 개수 반환"""
     ips = _SRC_IPS[0]
@@ -185,31 +173,6 @@ def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
     while s >> 16:
         s = (s & 0xffff) + (s >> 16)
     return (~s) & 0xffff
-
-def _ip_checksum(ip_hdr):
-    """IP 헤더 체크섬 계산. int 반환"""
-    if len(ip_hdr) % 2:
-        ip_hdr += b'\x00'
-    s = 0
-    for i in range(0, len(ip_hdr), 2):
-        s += (ip_hdr[i] << 8) + ip_hdr[i+1]
-    while s >> 16:
-        s = (s & 0xffff) + (s >> 16)
-    return (~s) & 0xffff
-
-def _build_tcp_packet(src_ip, dst_ip, sport, dport, seq, ack, flags, payload=b""):
-    """완전한 IPv4+TCP 패킷 구성. bytes 반환"""
-    ip_id = random.randint(0, 65535)
-    ip_totlen = 20 + 20 + len(payload)
-    ip_hdr = struct.pack("!BBHHHBBH4s4s",
-        0x45, 0, ip_totlen, ip_id, 0, 64, 6, 0,
-        bytes([int(x) for x in src_ip.split('.')]),
-        bytes([int(x) for x in dst_ip.split('.')]))
-    cksum = _tcp_checksum(src_ip, dst_ip, sport, dport, seq, ack, flags, payload)
-    tcp_hdr = struct.pack("!HHIIBBHHH",
-        sport, dport, seq, ack,
-        5 << 4, flags, 65535, 0, cksum)
-    return ip_hdr + tcp_hdr + payload
 
 # ── Stats ─────────────────────────────────────────────────────────
 class Stats:
@@ -1999,13 +1962,6 @@ async def synack_worker(name, url, stats, duration, stop, payload_size=0):
         stats.errors += errs
 
 # ── RST flood: SO_LINGER(0,0) close sends RST ───────────────────
-def _open_rst_sock(host, port):
-    """TCP 연결 후 미읽은 데이터와 함께 close() -> RST (SO_LINGER 없음)."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(0.5)  # fast timeout
-    s.connect((host, port))
-    return s
-
 def _mp_rst_flood(args_tuple):
     """멀티프로세스 RST 패킷: 연결, 전송, close (RST)."""
     host, port, duration, payload = args_tuple
@@ -2060,13 +2016,6 @@ async def rst_worker(name, url, stats, duration, stop, payload_size=1):
         stats.errors += errs
 
 # ── FIN flood: connect -> graceful close (FIN) ────────────────────
-def _open_fin_sock(host, port):
-    """TCP 연결 후 데이터 배수 없이 정상 close (FIN)."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(0.5)  # fast timeout
-    s.connect((host, port))
-    return s
-
 def _mp_fin_flood(args_tuple):
     """멀티프로세스 FIN 패킷: 연결, 정상 close (FIN)."""
     host, port, duration = args_tuple
@@ -2196,29 +2145,6 @@ DEFAULT_PAYLOADS = {
 # ═══════════════════════════════════════════════════════════════════
 # IMPACT SCORING
 # ═══════════════════════════════════════════════════════════════════
-
-async def _sample_process(pid, interval=0.5, duration=5):
-    """프로세스 CPU%/메모리 샘플링 (지정 시간)."""
-    try:
-        import psutil
-        proc = psutil.Process(pid)
-        samples = []
-        deadline = time.time() + duration
-        while time.time() < deadline:
-            try:
-                cpu = proc.cpu_percent(interval=None)
-                mem = proc.memory_info().rss
-                samples.append((cpu, mem))
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                break
-            await asyncio.sleep(interval)
-        if samples:
-            avg_cpu = sum(c for c, _ in samples) / len(samples)
-            max_mem = max(m for _, m in samples)
-            return {"avg_cpu_pct": round(avg_cpu, 1), "max_mem_mb": round(max_mem / 1024 / 1024, 1)}
-    except ImportError:
-        pass
-    return None
 
 async def _find_pid(port):
     """포트监听 PID 검색 (lsof, 폴백 ps)."""
