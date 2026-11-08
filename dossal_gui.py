@@ -239,19 +239,52 @@ class DossalGUI:
     
     def _run_attack(self, cmd):
         try:
+            # Add --live for real-time stats
+            cmd = cmd + ['--live']
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
+            # Read stdout line by line for live stats
+            for line in (proc.stdout or []):
+                line = line.strip()
+                if not line:
+                    continue
+                # Live stats line: [30s] RPS=12345 PPS=67890 CONNS=8 ERR=0 429_IP=5 ACTIVE=95/100
+                if line.startswith('[') and 'RPS=' in line:
+                    # Parse live stats
+                    import re
+                    rps_m = re.search(r'RPS=([\d,]+)', line)
+                    pps_m = re.search(r'PPS=([\d,]+)', line)
+                    conns_m = re.search(r'CONNS=(\d+)', line)
+                    err_m = re.search(r'ERR=(\d+)', line)
+                    ip429_m = re.search(r'429_IP=(\d+)', line)
+                    active_m = re.search(r'ACTIVE=(\d+)/(\d+)', line)
+                    
+                    if rps_m:
+                        self.stats['rps'] = int(rps_m.group(1).replace(',', ''))
+                    if pps_m:
+                        self.stats['packets'] = int(pps_m.group(1).replace(',', ''))
+                    if conns_m:
+                        self.stats['connections_made'] = int(conns_m.group(1))
+                    if err_m:
+                        self.stats['errors'] = int(err_m.group(1))
+                    if ip429_m:
+                        self.stats['429_ips'] = int(ip429_m.group(1))
+                    if active_m:
+                        self.stats['active_ips'] = f"{active_m.group(1)}/{active_m.group(2)}"  # type: ignore
+                    
+                    self.log(f"Live: RPS={self.stats.get('rps',0):,} PPS={self.stats.get('packets',0):,} 429_IP={self.stats.get('429_ips',0)}")
+                    self.root.after(0, self._update_stats)
+                elif line.startswith('{'):
+                    # Final JSON result
+                    try:
+                        data = json.loads(line)
+                        self.stats.update(data)
+                        self.log(f"Complete: {data.get('rps', 0):,.0f} RPS, {data.get('packets', 0):,} packets")
+                    except:
+                        pass
+            
             proc.wait()
             
-            # Parse output
-            output = proc.stdout.read() if proc.stdout else ""
-            try:
-                js = output[output.find('{'):]
-                data = json.loads(js)
-                self.stats.update(data)
-                self.log(f"Complete: {data.get('rps', 0):,.0f} RPS, {data.get('packets', 0):,} packets")
-            except:
-                self.log(f"Output: {output[:200]}")
-        
         except Exception as e:
             self.log(f"Error: {e}")
         finally:
@@ -308,12 +341,17 @@ class DossalGUI:
         progress = min(elapsed / self.duration * 100, 100)
         self.progress.config(value=progress)
         
-        # In production, read live stats from dossal
-        # For now, show placeholder
         self.rps_label.config(text=f"RPS: {self.stats.get('rps', 0):,.0f}")
         self.pps_label.config(text=f"PPS: {self.stats.get('packets', 0):,.0f}")
         self.conns_label.config(text=f"Conns: {self.stats.get('connections_made', 0):,.0f}")
         self.err_label.config(text=f"Err: {self.stats.get('errors', 0):,.0f}")
+        
+        # Show 429 IP count if available
+        if '429_ips' in self.stats:
+            extra = f" 429: {self.stats['429_ips']}"
+            if 'active_ips' in self.stats:
+                extra += f" ACTIVE: {self.stats['active_ips']}"
+            self.err_label.config(text=f"Err: {self.stats.get('errors', 0):,.0f}{extra}")
         
         self.root.after(500, self._update_stats)
     

