@@ -40,6 +40,8 @@ TESTS = [
     ('ssdp',      'udp://127.0.0.1:9999',      1, 2, {'threads': 8}),
     ('ntp',       'udp://127.0.0.1:9999',      1, 2, {'threads': 8}),
     ('memcached', 'udp://127.0.0.1:9999',      1, 2, {'threads': 8}),
+    # HTTP/3 multiproc
+    ('h3mp',      'udp://127.0.0.1:4443',      1, 3, {'threads': 16}),
 ]
 
 def run_mode(mode, url, conns, dur, extra=None):

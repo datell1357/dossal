@@ -330,8 +330,28 @@ http, https, httpsmp, raw, h2, h2mp, grpc, grpcmp, quic, udp, tcp, syn, synack, 
 | ssdp 8p | 680k pkts |
 | ntp 8p | 720k pkts |
 | memcached 8p | 720k pkts |
+| h3mp 16p | 317k PPS (0 err) |
 | syn 8p | 16k conns |
 | fin 8p | 61k conns (0% err) |
+
+### v4.2 New Features
+- **TLS 1.3 0-RTT**: session reuse + early data (httpsmp 24p: 13.6k RPS)
+- **HTTP/3 h3mp**: QUIC Initial + H3 SETTINGS + GET (317k PPS)
+- **GUI controller** (dossal_net.py --gui): tkinter botnet controller
+- **--rotate-interval**: IP rotation speed control
+- **GUI impact score**: CRITICAL/HIGH/MEDIUM/LOW/MINIMAL
+- **--jitter MS**: random delay (natural attack pattern)
+- **--combo amplify**: dns+icmp+ssdp+ntp+memcached (900k pkts)
+- **PyInstaller EXE**: dist/dossal 14MB (Windows/Mac)
+
+### Combos (5)
+| Combo | Modes |
+|---|---|
+| web | raw,udp,syn |
+| full | raw,udp,syn,rst |
+| tls | httpsmp,h2,udp (34.2k RPS) |
+| proto | grpcmp,h2,udp |
+| amplify | dns,icmp,ssdp,ntp,memcached (900k pkts) |
 
 ### Bench
 - PEAK: 638.9 (17-mode bench)
