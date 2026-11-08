@@ -156,6 +156,16 @@ class DossalGUI:
         self.err_label = ttk.Label(stats_frame, text="Err: 0", font=('Consolas', 10))
         self.err_label.pack(side=tk.LEFT, padx=10)
         
+        # Live chart (RPS/PPS real-time)
+        chart_frame = ttk.LabelFrame(main, text="Live Chart", padding=5)
+        chart_frame.pack(fill=tk.X, pady=5)
+        self.chart = tk.Canvas(chart_frame, height=100, bg='#1a1a2e', highlightthickness=0)
+        self.chart.pack(fill=tk.X)
+        self._chart_data_rps = []
+        self._chart_data_pps = []
+        self._chart_max = 1
+        self._chart_window = 60  # 60 data points
+        
         # Log
         log_frame = ttk.LabelFrame(main, text="Log", padding=5)
         log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -335,6 +345,53 @@ class DossalGUI:
         # Kill the subprocess (simplified)
         # In production, send SIGTERM or use process group
     
+    def _draw_chart(self):
+        """Draw real-time RPS/PPS chart."""
+        # Append new data point
+        self._chart_data_rps.append(self.stats.get('rps', 0))
+        self._chart_data_pps.append(self.stats.get('packets', 0))
+        # Keep only last N points
+        if len(self._chart_data_rps) > self._chart_window:
+            self._chart_data_rps.pop(0)
+            self._chart_data_pps.pop(0)
+        
+        # Clear chart
+        self.chart.delete("all")
+        w = self.chart.winfo_width() or 400
+        h = 100
+        
+        # Calculate max for scaling
+        max_rps = max(self._chart_data_rps) if self._chart_data_rps else 1
+        max_pps = max(self._chart_data_pps) if self._chart_data_pps else 1
+        self._chart_max = max(max_rps, max_pps, 1)
+        
+        if not self._chart_data_rps:
+            return
+        
+        # Draw RPS line (cyan)
+        points_rps = []
+        for i, v in enumerate(self._chart_data_rps):
+            x = i / max(1, len(self._chart_data_rps) - 1) * w
+            y = h - (v / self._chart_max) * (h - 10) - 5
+            points_rps.append((x, y))
+        if len(points_rps) > 1:
+            flat = [coord for pt in points_rps for coord in pt]
+            self.chart.create_line(flat, fill='#00d4ff', width=2)
+        
+        # Draw PPS line (green)
+        points_pps = []
+        for i, v in enumerate(self._chart_data_pps):
+            x = i / max(1, len(self._chart_data_pps) - 1) * w
+            y = h - (v / self._chart_max) * (h - 10) - 5
+            points_pps.append((x, y))
+        if len(points_pps) > 1:
+            flat = [coord for pt in points_pps for coord in pt]
+            self.chart.create_line(flat, fill='#00ff88', width=1)
+        
+        # Labels
+        self.chart.create_text(5, 5, text=f"RPS: {max_rps:,.0f}", anchor=tk.NW, fill='#00d4ff', font=('Consolas', 8))
+        self.chart.create_text(100, 5, text=f"PPS: {max_pps:,.0f}", anchor=tk.NW, fill='#00ff88', font=('Consolas', 8))
+    
     def _update_stats(self):
         if not self.running:
             return
@@ -348,6 +405,9 @@ class DossalGUI:
         self.conns_label.config(text=f"Conns: {self.stats.get('connections_made', 0):,.0f}")
         self.err_label.config(text=f"Err: {self.stats.get('errors', 0):,.0f}")
         
+        # Draw chart
+        self._draw_chart()
+        
         # Show 429 IP count if available
         if '429_ips' in self.stats:
             extra = f" 429: {self.stats['429_ips']}"
@@ -358,42 +418,51 @@ class DossalGUI:
         self.root.after(500, self._update_stats)
     
     def save_profile(self):
+        """Save current settings as a profile (.json)."""
         from tkinter import filedialog
         path = filedialog.asksaveasfilename(defaultextension='.json', filetypes=[("JSON", "*.json")])
-        if path:
-            profile = {
-                'url': self.url_var.get(),
-                'duration': self.dur_var.get(),
-                'preset': self.preset_var.get(),
-                'spoof': self.spoof_var.get(),
-                'stealth': self.stealth_var.get(),
-                'recovery': self.recovery_var.get(),
-                'threads': self.threads_var.get(),
-                'proxy': self.proxy_var.get(),
-                'mode': self.mode_var.get(),
-                'targets': self.targets_var.get(),
-            }
-            with open(path, 'w') as f:
-                json.dump(profile, f, indent=2)
-            self.log(f"Profile saved: {path}")
+        if not path:
+            return
+        profile = {
+            'url': self.url_var.get(),
+            'duration': self.dur_var.get(),
+            'preset': self.preset_var.get(),
+            'fast': self.fast_var.get(),
+            'spoof': self.spoof_var.get(),
+            'stealth': self.stealth_var.get(),
+            'recovery': self.recovery_var.get(),
+            'threads': self.threads_var.get(),
+            'targets': self.targets_var.get(),
+            'proxy': self.proxy_var.get(),
+            'mode': self.mode_var.get(),
+        }
+        with open(path, 'w') as f:
+            json.dump(profile, f, indent=2)
+        self.log(f"Profile saved: {path}")
     
     def load_profile(self):
+        """Load settings from a profile (.json)."""
         from tkinter import filedialog
         path = filedialog.askopenfilename(filetypes=[("JSON", "*.json")])
-        if path:
+        if not path:
+            return
+        try:
             with open(path) as f:
-                profile = json.load(f)
-            self.url_var.set(profile.get('url', ''))
-            self.dur_var.set(str(profile.get('duration', '10')))
-            self.preset_var.set(profile.get('preset', 'power'))
-            self.spoof_var.set(profile.get('spoof', True))
-            self.stealth_var.set(profile.get('stealth', True))
-            self.recovery_var.set(profile.get('recovery', True))
-            self.threads_var.set(str(profile.get('threads', '16')))
-            self.proxy_var.set(profile.get('proxy', ''))
-            self.mode_var.set(profile.get('mode', 'auto'))
-            self.targets_var.set(profile.get('targets', ''))
+                p = json.load(f)
+            self.url_var.set(p.get('url', ''))
+            self.dur_var.set(str(p.get('duration', '10')))
+            self.preset_var.set(p.get('preset', 'power'))
+            self.fast_var.set(p.get('fast', True))
+            self.spoof_var.set(p.get('spoof', True))
+            self.stealth_var.set(p.get('stealth', True))
+            self.recovery_var.set(p.get('recovery', True))
+            self.threads_var.set(str(p.get('threads', '8')))
+            self.targets_var.set(p.get('targets', ''))
+            self.proxy_var.set(p.get('proxy', ''))
+            self.mode_var.set(p.get('mode', 'auto'))
             self.log(f"Profile loaded: {path}")
+        except Exception as e:
+            self.log(f"Profile error: {e}")
     
     def save_report(self):
         try:
