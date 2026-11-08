@@ -28,6 +28,14 @@ def run_worker(controller_addr, node_id, listen_port=9998):
     proc = None
     stats = {'status': 'idle', 'rps': 0, 'packets': 0}
     
+    # Register with controller on startup
+    try:
+        hello = json.dumps({'node': node_id, 'cmd': 'hello', 'status': 'idle'}).encode()
+        sock.sendto(hello, controller_addr)
+        print(f"[{node_id}] Registered with controller")
+    except Exception as e:
+        print(f"[{node_id}] Registration failed: {e}")
+    
     # Auto-report status every 2 seconds
     def reporter():
         while True:

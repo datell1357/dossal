@@ -120,6 +120,17 @@ class DossalGUI:
                                     values=['auto', 'raw', 'httpsmp', 'h2', 'h2mp', 'udp', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached', 'syn', 'combo', 'full'])
         mode_combo.grid(row=7, column=1, sticky=tk.W, pady=2)
         
+        # Combo attack
+        ttk.Label(opt_frame, text="Combo:").grid(row=8, column=0, sticky=tk.W, pady=2)
+        combo_frame = ttk.Frame(opt_frame)
+        combo_frame.grid(row=8, column=1, sticky=tk.W, pady=2)
+        self.combo_var = tk.StringVar(value="")
+        ttk.Radiobutton(combo_frame, text="Off", variable=self.combo_var, value="").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="WEB", variable=self.combo_var, value="web").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="TLS", variable=self.combo_var, value="tls").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="AMPLIFY", variable=self.combo_var, value="amplify").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="FULL", variable=self.combo_var, value="full").pack(side=tk.LEFT, padx=2)
+        
         # Buttons
         btn_frame = ttk.Frame(main)
         btn_frame.pack(fill=tk.X, pady=10)
@@ -208,7 +219,10 @@ class DossalGUI:
         cmd = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dossal.py')]
         cmd.extend(['--url', url, '--duration', str(duration), '--threads', str(threads)])
         
-        if fast:
+        combo = self.combo_var.get()
+        if combo:
+            cmd.extend(['--combo', combo])
+        elif fast:
             cmd.append('--auto')
         elif mode != 'auto':
             cmd.extend(['--mode', mode])
