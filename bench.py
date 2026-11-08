@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# dossal 벤치마크: 24개 모드, 로컬 victim 대상, 점수 = sum(rps/1000 + pkts/100000)
 """
 dossal bench — 측정 계약 (evaluation contract)
 command:    python3 bench.py

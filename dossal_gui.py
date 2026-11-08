@@ -119,7 +119,7 @@ class DossalGUI:
         self.mode_var = tk.StringVar(value="auto")
         ttk.Label(opt_frame, text="Mode (auto = smart select):").grid(row=7, column=0, sticky=tk.W, pady=2)
         mode_combo = ttk.Combobox(opt_frame, textvariable=self.mode_var, width=30,
-                                    values=['auto', 'raw', 'httpsmp', 'h2', 'h2mp', 'udp', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached', 'syn', 'combo', 'full'])
+                                    values=['auto', 'raw', 'httpsmp', 'https', 'http', 'h2', 'h2mp', 'h3mp', 'grpc', 'grpcmp', 'quic', 'udp', 'tcp', 'syn', 'synack', 'rst', 'fin', 'websocket', 'wsm', 'slowloris', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached'])
         mode_combo.grid(row=7, column=1, sticky=tk.W, pady=2)
         
         # Combo attack

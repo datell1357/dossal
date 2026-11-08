@@ -1,3 +1,4 @@
+"""CPU-heavy HTTP victim (port 8082). 임팩트 스코어링 테스트용."""
 #!/usr/bin/env python3
 # CPU-heavy victim: measures impact score under attack
 import http.server, threading, os, time

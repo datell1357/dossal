@@ -17,6 +17,7 @@ CERT = HERE / 'cert.pem'
 KEY = HERE / 'key.pem'
 
 def ensure_cert():
+    """TLS 인증서/키 생성."""
     if CERT.exists() and KEY.exists():
         return
     import subprocess
@@ -28,13 +29,14 @@ def ensure_cert():
 ensure_cert()
 
 def cpu_work():
+    """CPU 부하 생성 (gRPC 요청 처리 시)."""
     x = 0
     for i in range(1000):
         x += i * i
     return x
 
 async def handle_h2(reader, writer):
-    """Minimal HTTP/2 handler for gRPC testing."""
+    """HTTP/2 gRPC 요청 처리 (최소 구현)."""
     from h2.connection import H2Connection
     from h2.config import H2Configuration
     from h2.events import RequestReceived
@@ -86,7 +88,7 @@ async def handle_h2(reader, writer):
             pass
 
 def worker(port):
-    """Run an asyncio event loop in a worker process."""
+    """워커 프로세스에서 asyncio 이벤트 루프 실행."""
     async def _main():
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(str(CERT), str(KEY))

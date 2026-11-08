@@ -1,3 +1,4 @@
+"""UDP 패킷 수신 victim (port 9999). dossal udp/dns/icmp/ssdp/ntp/memcached 모드 테스트용."""
 #!/usr/bin/env python3
 """UDP receiver for local DoS lab."""
 import socket, os, json, sys

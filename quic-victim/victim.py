@@ -10,6 +10,7 @@ import time
 PORT = 4443
 
 async def main():
+    """QUIC/UDP victim 메인 (port 4443, 패킷 수신)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('127.0.0.1', PORT))

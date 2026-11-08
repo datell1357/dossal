@@ -12,6 +12,7 @@ import json
 PORT = 8090
 
 async def handle(reader, writer):
+    """WebSocket 업그레이드 + 프레임 처리."""
     # Read HTTP upgrade request
     data = await reader.readuntil(b'\r\n\r\n')
     if b'Upgrade: websocket' not in data:
@@ -69,6 +70,7 @@ async def handle(reader, writer):
         writer.close()
 
 async def main():
+    """WS victim 메인 (port 8090)."""
     server = await asyncio.start_server(handle, '127.0.0.1', PORT)
     print(f'ws-victim listening on {PORT}', flush=True)
     async with server:

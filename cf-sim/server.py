@@ -26,6 +26,7 @@ PER_IP_RATE = int(os.environ.get('CF_SIM_PER_IP_RATE', '1000'))
 PER_IP_BURST = int(os.environ.get('CF_SIM_PER_IP_BURST', '50'))
 
 def ensure_cert():
+    """TLS 인증서/키 생성 (없으면 자동 생성)."""
     if CERT.exists() and KEY.exists():
         return
     subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-keyout',str(KEY),
@@ -66,11 +67,13 @@ global_bucket = TokenBucket(RATE_LIMIT, RATE_LIMIT)
 per_ip_buckets = {}
 
 async def get_bucket(peer):
+    """per-IP 토큰 버킷 반환 (없으면 생성)."""
     if peer not in per_ip_buckets:
         per_ip_buckets[peer] = TokenBucket(PER_IP_RATE, PER_IP_BURST)
     return per_ip_buckets[peer]
 
 async def read_headers(reader):
+    """HTTP 요청 헤더 읽기."""
     request_line = await asyncio.wait_for(reader.readline(), timeout=1.0)
     if not request_line:
         return None, {}, 0
@@ -116,6 +119,7 @@ async def handle_http1(reader, writer, peer):
         await writer.drain()
 
 def handle_h2_event(conn, event, writer, peer):
+    """H2 이벤트 처리 (요청 수신 → 200 OK 응답)."""
     if isinstance(event, RequestReceived):
         headers = dict(event.headers)
         path = headers.get(':path', '/')
@@ -195,6 +199,7 @@ async def handle_h2(reader, writer, peer):
             pass
 
 def make_ssl_ctx(protocol):
+    """TLS 컨텍스트 생성 (SNI 기반)."""
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(str(CERT), str(KEY))
     if protocol == 'h2':
@@ -204,6 +209,7 @@ def make_ssl_ctx(protocol):
     return ctx
 
 async def main():
+    """cf-sim 메인: h1(8443) + h2(8444) 서버 시작."""
     h1_ctx = make_ssl_ctx('h1')
     h2_ctx = make_ssl_ctx('h2')
     # Run two listeners: one for h1 (port 8443), one for h2 (port 8444)
@@ -215,6 +221,7 @@ async def main():
         await asyncio.gather(server_h1.serve_forever(), server_h2.serve_forever())
 
 async def handle_http1_wrap(reader, writer):
+    """HTTP/1.1 래퍼 (에러 처리)."""
     peer = writer.get_extra_info('peername')
     m.active += 1
     m.peak_concurrent = max(m.peak_concurrent, m.active)
@@ -230,6 +237,7 @@ async def handle_http1_wrap(reader, writer):
             pass
 
 async def handle_h2_wrap(reader, writer):
+    """H2 래퍼 (에러 처리)."""
     peer = writer.get_extra_info('peername')
     await handle_h2(reader, writer, peer)
 
