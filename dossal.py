@@ -2491,14 +2491,39 @@ examples:
         print(f"[auto] target: {probe['host']}:{probe['port']} ({probe['scheme']})", file=sys.stderr)
         print(f"[auto] detected: {', '.join(probe.get('protocols', ['?']))}", file=sys.stderr)
         auto_modes = probe.get('recommended', ['http'])
-        # Always add L4 modes for maximum impact
-        for l4 in ['udp', 'syn']:
+        
+        # Smart mode selection based on detected protocols
+        port = probe.get('port', 80)
+        scheme = probe.get('scheme', 'http')
+        
+        # L7: strongest modes for HTTP/HTTPS targets
+        if scheme in ('http', 'https'):
+            for m in ['raw', 'httpsmp', 'h2mp']:
+                if m not in auto_modes:
+                    auto_modes.append(m)
+        
+        # L4: always add for maximum impact
+        for l4 in ['udp', 'syn', 'rst']:
             if l4 not in auto_modes:
                 auto_modes.append(l4)
-        print(f"[auto] using: {', '.join(auto_modes)}", file=sys.stderr)
+        
+        # Amplification: add for UDP-friendly targets
+        # These work best when target has UDP service or is behind a proxy
+        for amp in ['dns', 'icmp']:
+            if amp not in auto_modes:
+                auto_modes.append(amp)
+        
+        # Deduplicate, preserve order
+        auto_modes = list(dict.fromkeys(auto_modes))
+        print(f"[auto] using: {', '.join(auto_modes)} ({len(auto_modes)} modes)", file=sys.stderr)
         args.mode = ','.join(auto_modes)
-        # Set per-mode optimal connections for auto
-        _AUTO_CONNS = {'http': 200, 'raw': 1, 'https': 50, 'httpsmp': 1, 'h2': 300, 'grpc': 50, 'grpcmp': 1, 'udp': 1, 'quic': 1, 'syn': 10, 'rst': 1, 'tcp': 1, 'wsm': 1}
+        
+        # Set per-mode optimal connections/threads for auto
+        _AUTO_CONNS = {
+            'http': 200, 'raw': 1, 'https': 50, 'httpsmp': 1, 'h2': 300, 'h2mp': 1,
+            'grpc': 50, 'grpcmp': 1, 'udp': 1, 'quic': 1, 'syn': 1, 'rst': 1,
+            'tcp': 1, 'wsm': 1, 'dns': 1, 'icmp': 1, 'ssdp': 1, 'ntp': 1, 'memcached': 1,
+        }
         auto_conn_parts = [f"{m}={_AUTO_CONNS.get(m, 50)}" for m in auto_modes]
         if args.conns:
             args.conns = args.conns + ',' + ','.join(auto_conn_parts)
