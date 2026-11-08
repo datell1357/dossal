@@ -455,6 +455,9 @@ def _mp_https_flood(args_tuple):
             req_counter += 1
             if req_counter % 500 == 0:
                 req = _random_http_req(host, path)
+            if _JITTER[0] > 0:
+                import random as _rj
+                _time.sleep(_rj.uniform(0, _JITTER[0]))
             ssock.sendall(req)
             data = ssock.recv(65535)
             if not data:
@@ -503,6 +506,9 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
            f"User-Agent: dossal/{VERSION}\r\n\r\n")
     req_bytes = req.encode()
     while not stop.is_set():
+        if _JITTER[0] > 0:
+            import random as _rj
+            await asyncio.sleep(_rj.uniform(0, _JITTER[0]))
         try:
             async def _write_read():
                 writer.write(req_bytes)
@@ -793,6 +799,9 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
     error = None
     h2_429 = 0
     while not stop.is_set():
+        if _JITTER[0] > 0:
+            import random as _rj
+            await asyncio.sleep(_rj.uniform(0, _JITTER[0]))
         try:
             # Randomize headers per batch
             batch_headers = _h2_headers()
@@ -1632,6 +1641,9 @@ def _mp_http_send(args_tuple):
             else:
                 req_idx = (req_idx + 1) % 10
             req = req_pool[req_idx]
+            if _JITTER[0] > 0:
+                import random as _rj
+                _time.sleep(_rj.uniform(0, _JITTER[0]))
             s.sendall(req)
             data = s.recv(65535)
             if not data:
