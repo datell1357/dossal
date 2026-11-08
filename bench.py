@@ -32,6 +32,14 @@ TESTS = [
     ('tcp',       'tcp://127.0.0.1:8080',       10, 2, {'threads': 8}),
     ('quic',      'udp://127.0.0.1:4443',      1, 2, {'threads': 8}),
     ('udp',         'udp://127.0.0.1:9999',     1, 2, {'threads': 8}),
+    # H2 multiproc
+    ('h2mp',      'https://127.0.0.1:8444',    1, 3, {'threads': 16}),
+    # L4 amplification modes
+    ('dns',       'udp://127.0.0.1:9999',      1, 2, {'threads': 8}),
+    ('icmp',      'udp://127.0.0.1:9999',      1, 2, {'threads': 8}),
+    ('ssdp',      'udp://127.0.0.1:9999',      1, 2, {'threads': 8}),
+    ('ntp',       'udp://127.0.0.1:9999',      1, 2, {'threads': 8}),
+    ('memcached', 'udp://127.0.0.1:9999',      1, 2, {'threads': 8}),
 ]
 
 def run_mode(mode, url, conns, dur, extra=None):
