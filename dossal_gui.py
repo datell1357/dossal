@@ -117,7 +117,7 @@ class DossalGUI:
         self.mode_var = tk.StringVar(value="auto")
         ttk.Label(opt_frame, text="Mode (auto = smart select):").grid(row=7, column=0, sticky=tk.W, pady=2)
         mode_combo = ttk.Combobox(opt_frame, textvariable=self.mode_var, width=30,
-                                    values=['auto', 'raw', 'httpsmp', 'h2', 'h2mp', 'udp', 'dns', 'icmp', 'syn', 'combo', 'full'])
+                                    values=['auto', 'raw', 'httpsmp', 'h2', 'h2mp', 'udp', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached', 'syn', 'combo', 'full'])
         mode_combo.grid(row=7, column=1, sticky=tk.W, pady=2)
         
         # Buttons
