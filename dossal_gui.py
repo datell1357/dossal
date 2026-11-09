@@ -108,9 +108,23 @@ class DossalGUI:
             self.combo_var.set('')
         specs = self.MODE_SPECS.get(preset)
         if specs:
+            cores = getattr(self, '_pc_cores', 8)
+            pct = int(self.usage_var.get())
+            threads = int(self.threads_var.get())
+            # Calculate actual process count based on mode
+            mode = self.mode_var.get()
+            if preset == 'super':
+                mode_count = 21
+            elif mode == 'combo':
+                mode_count = 3
+            else:
+                mode_count = 1
+            actual_procs = max(threads // mode_count, 1) * mode_count if mode_count > 1 else threads
+            
             self.log(f"[{preset}] {specs['desc']}")
-            self.log(f"  프로세스 {self.threads_var.get()}개 (코어 {getattr(self, '_pc_cores', '?')} × {self.usage_var.get()}%)")
-            self.log(f"  ※ dossal이 모드 수만큼 프로세스 자동 분배")
+            self.log(f"  이 PC: {cores}개 코어")
+            self.log(f"  사용: {cores}개 중 {int(cores * pct / 100)}개 ({pct}%)")
+            self.log(f"  실제 프로세스: {actual_procs}개 (모드 {mode_count}개에 분배)")
     
     """UI 레이아웃 구성 (tkinter)."""
     def _detect_pc_specs(self):
