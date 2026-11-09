@@ -134,7 +134,7 @@ class DossalGUI:
         ttk.Radiobutton(combo_frame, text="TLS", variable=self.combo_var, value="tls").pack(side=tk.LEFT, padx=2)
         ttk.Radiobutton(combo_frame, text="AMPLIFY", variable=self.combo_var, value="amplify").pack(side=tk.LEFT, padx=2)
         ttk.Radiobutton(combo_frame, text="FULL", variable=self.combo_var, value="full")
-        ttk.Radiobutton(combo_frame, text="⚡SUPER", variable=self.combo_var, value="super").pack(side=tk.LEFT, padx=2).pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="⚡SUPER", variable=self.combo_var, value="super").pack(side=tk.LEFT, padx=2)
         
         # Buttons
         btn_frame = ttk.Frame(main)
