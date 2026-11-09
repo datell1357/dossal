@@ -60,49 +60,48 @@ class DossalGUI:
         },
     }
 
-    def _apply_preset(self):
-        """인텐시트 프리셋 적용 + 사양 정보 표시."""
-        preset = self.preset_var.get()
-        if preset == 'power':
-            self.fast_var.set(True)
-            self.spoof_var.set(False)
-            self.stealth_var.set(False)
-            self.recovery_var.set(False)
-            self.threads_var.set('24')
-            self.mode_var.set('combo')
-        elif preset == 'stealth':
-            self.fast_var.set(True)
-            self.spoof_var.set(True)
-            self.stealth_var.set(True)
-            self.recovery_var.set(True)
-            self.threads_var.set('8')
-            self.mode_var.set('auto')
-        elif preset == 'speed':
-            self.fast_var.set(True)
-            self.spoof_var.set(False)
-            self.stealth_var.set(False)
-            self.recovery_var.set(False)
-            self.threads_var.set('32')
-            self.mode_var.set('raw')
-        elif preset == 'super':
-            self.fast_var.set(True)
-            self.spoof_var.set(True)
-            self.stealth_var.set(True)
-            self.recovery_var.set(True)
-            # PC 사양 감지값 사용 (코어 50%, 없으면 16)
-            if hasattr(self, '_pc_threads'):
-                self.threads_var.set(self._pc_threads)
-            else:
-                self.threads_var.set('16')
-            self.mode_var.set('auto')
-            self.combo_var.set('super')
+    # 모드별 CPU 부담률 (1.0 = 1 프로세스 = 1 코어 완전 점유)
+    CPU_LOAD = {'super': 0.5, 'speed': 1.0, 'stealth': 0.75, 'power': 0.75}
 
-        # 사양 정보 로그 출력
+    def _calc_threads(self, preset):
+        """모드별 CPU 부담을 고려해 PC 사양에 맞는 프로세스 수 계산.
+        
+        각 모드마다 1 프로세스당 CPU 부담이 다르다:
+        - SUPER: 21개 모드 동시 → 프로세스당 CPU 2배 → 코어의 50%만
+        - 스피드: raw 단일 → 프로세스당 CPU 1 → 코어 전부
+        - 스텔스/최대전력: 중간 → 코어의 75%
+        """
+        cores = getattr(self, '_pc_cores', 8)
+        pct = int(self.usage_var.get()) / 100.0
+        load = self.CPU_LOAD.get(preset, 0.75)
+        threads = int(cores * pct * load)
+        return str(max(2, min(threads, 32, cores)))
+
+    def _apply_preset(self):
+        """인텐시트 프리셋 적용 + PC 사양 기반 프로세스 자동 계산."""
+        preset = self.preset_var.get()
+        cfg = {
+            'power':   dict(fast=True,  spoof=False, stealth=False, recovery=False, mode='combo'),
+            'stealth': dict(fast=True,  spoof=True,  stealth=True,  recovery=True,  mode='auto'),
+            'speed':   dict(fast=True,  spoof=False, stealth=False, recovery=False, mode='raw'),
+            'super':   dict(fast=True,  spoof=True,  stealth=True,  recovery=True,  mode='auto'),
+        }
+        c = cfg.get(preset, cfg['power'])
+        self.fast_var.set(c['fast'])
+        self.spoof_var.set(c['spoof'])
+        self.stealth_var.set(c['stealth'])
+        self.recovery_var.set(c['recovery'])
+        self.threads_var.set(self._calc_threads(preset))
+        self.mode_var.set(c['mode'])
+        if preset == 'super':
+            self.combo_var.set('super')
+        else:
+            self.combo_var.set('')
         specs = self.MODE_SPECS.get(preset)
         if specs:
+            load = self.CPU_LOAD.get(preset, 0.75)
             self.log(f"[프리셋] {specs['desc']}")
-            self.log(f"  최소: {specs['min']}")
-            self.log(f"  권장: {specs['rec']}")
+            self.log(f"  프로세스: {self.threads_var.get()}개 (코어 {getattr(self, '_pc_cores', '?')} × {self.usage_var.get()}% × 부담 {load:.0%})")
             self.log(f"  예측: {specs['predict']}")
     
     """UI 레이아웃 구성 (tkinter)."""
@@ -147,32 +146,19 @@ class DossalGUI:
         os_name = platform.system()
         os_ver = platform.version()[:10]
         
-        # 권장 옵션 결정 (코어의 50%만 공격에 사용, 나머지는 PC 운영)
-        # 30코어 → 15 프로세스, 16코어 → 8, 8코어 → 4, 4코어 → 2
-        attack_threads = max(2, cores // 2)
-        attack_threads = min(attack_threads, 32)  # dossal 상한
+        # 코어 수 저장 (_calc_threads에서 사용)
+        self._pc_cores = cores
         
-        if cores >= 16 and ram_gb >= 16:
+        # 권장 모드만 결정 (프로세스는 _calc_threads가 계산)
+        if cores >= 8 and ram_gb >= 8:
             recommended = 'super'
-            threads = attack_threads
-            message = f"💪 {cores}코어 PC → SUPER + {threads} 프로세스 (코어 50%만 사용, PC 사용 가능)"
-        elif cores >= 8 and ram_gb >= 8:
-            recommended = 'super'
-            threads = attack_threads
-            message = f"✅ {cores}코어 PC → SUPER + {threads} 프로세스 (코어 50%만 사용)"
         elif cores >= 4 and ram_gb >= 4:
             recommended = 'power'
-            threads = attack_threads
-            message = f"⚠️ {cores}코어 PC → 최대 전력 + {threads} 프로세스"
         else:
             recommended = 'speed'
-            threads = max(2, cores)
-            message = f"📉 {cores}코어 PC → 스피드 + {threads} 프로세스"
         
-        # 감지 결과 저장 (UI 변수 생성 후에 적용)
         self._pc_recommended = recommended
-        self._pc_threads = str(threads)
-        self._pc_message = message
+        self._pc_message = f"📋 PC: {cores}코어 / {ram_gb}GB RAM / {os_name} — 권장 모드: {recommended}"
         
         return {'cores': cores, 'ram_gb': ram_gb, 'os': os_name}
     
@@ -210,6 +196,14 @@ class DossalGUI:
         ttk.Radiobutton(preset_frame, text="🔥 최대 전력 (최강)", variable=self.preset_var, value="power", command=self._apply_preset).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=2)
         ttk.Radiobutton(preset_frame, text="🕵️ 스텔스 (IP 숨김 + 스푸핑 + 자동회복)", variable=self.preset_var, value="stealth", command=self._apply_preset).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=2)
         ttk.Radiobutton(preset_frame, text="⚡ 스피드 (최대 RPS)", variable=self.preset_var, value="speed", command=self._apply_preset).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=2)
+        
+        # PC 자원 사용률 (25/50/75%)
+        usage_frame = ttk.LabelFrame(main, text="🎚️ PC 자원 사용률 (공격에 쓸 코어 비율)", padding=5)
+        usage_frame.pack(fill=tk.X, pady=5)
+        self.usage_var = tk.StringVar(value="50")
+        ttk.Radiobutton(usage_frame, text="25% (여유 — PC가 가볍다)", variable=self.usage_var, value="25", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
+        ttk.Radiobutton(usage_frame, text="50% (기본 — 공격 중 PC 사용 가능)", variable=self.usage_var, value="50", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
+        ttk.Radiobutton(usage_frame, text="75% (강함 — PC가 무거워짐)", variable=self.usage_var, value="75", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
         
         # Advanced options (collapsible)
         opt_frame = ttk.LabelFrame(main, text="⚙️ 고급 옵션", padding=10)
@@ -316,9 +310,8 @@ class DossalGUI:
         # PC 사양 기반 권장 옵션 적용 (모든 UI 변수 생성 완료 후)
         if hasattr(self, '_pc_recommended'):
             self.preset_var.set(self._pc_recommended)
-            self.threads_var.set(self._pc_threads)
             self._apply_preset()
-            self.log(f"📋 {self._pc_message}")
+            self.log(self._pc_message)
     
     """로그 메시지 출력."""
     def log(self, msg):
