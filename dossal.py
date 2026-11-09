@@ -1646,7 +1646,7 @@ def _mp_http_send(args_tuple):
     if s:
         try:
             s.close()
-        except: pass
+        except OSError: pass
     return sent, errors, blocked, cur_ip
 
 async def _wait_pool(pool, async_result, timeout):
