@@ -89,7 +89,11 @@ class DossalGUI:
             self.spoof_var.set(True)
             self.stealth_var.set(True)
             self.recovery_var.set(True)
-            self.threads_var.set('16')
+            # PC 사양 감지값 사용 (코어 50%, 없으면 16)
+            if hasattr(self, '_pc_threads'):
+                self.threads_var.set(self._pc_threads)
+            else:
+                self.threads_var.set('16')
             self.mode_var.set('auto')
             self.combo_var.set('super')
 
@@ -143,23 +147,27 @@ class DossalGUI:
         os_name = platform.system()
         os_ver = platform.version()[:10]
         
-        # 권장 옵션 결정
+        # 권장 옵션 결정 (코어의 50%만 공격에 사용, 나머지는 PC 운영)
+        # 30코어 → 15 프로세스, 16코어 → 8, 8코어 → 4, 4코어 → 2
+        attack_threads = max(2, cores // 2)
+        attack_threads = min(attack_threads, 32)  # dossal 상한
+        
         if cores >= 16 and ram_gb >= 16:
             recommended = 'super'
-            threads = 16
-            message = f"💪 강력한 PC! SUPER 모드 권장 (16 프로세스)"
+            threads = attack_threads
+            message = f"💪 {cores}코어 PC → SUPER + {threads} 프로세스 (코어 50%만 사용, PC 사용 가능)"
         elif cores >= 8 and ram_gb >= 8:
             recommended = 'super'
-            threads = 16
-            message = f"✅ 좋은 PC! SUPER 모드 가능 (16 프로세스)"
+            threads = attack_threads
+            message = f"✅ {cores}코어 PC → SUPER + {threads} 프로세스 (코어 50%만 사용)"
         elif cores >= 4 and ram_gb >= 4:
             recommended = 'power'
-            threads = 8
-            message = f"⚠️ 기본 PC — 최대 전력 모드 권장 (8 프로세스)"
+            threads = attack_threads
+            message = f"⚠️ {cores}코어 PC → 최대 전력 + {threads} 프로세스"
         else:
             recommended = 'speed'
-            threads = 4
-            message = f"📉 저사양 PC — 스피드 모드 권장 (4 프로세스)"
+            threads = max(2, cores)
+            message = f"📉 {cores}코어 PC → 스피드 + {threads} 프로세스"
         
         # 감지 결과 저장 (UI 변수 생성 후에 적용)
         self._pc_recommended = recommended
