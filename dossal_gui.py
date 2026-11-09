@@ -112,13 +112,15 @@ class DossalGUI:
         target_frame = ttk.LabelFrame(main, text="🎯 대상", padding=10)
         target_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(target_frame, text="URL:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(target_frame, text="URL:", font=('', 10, 'bold')).grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(target_frame, text="공격할 웹사이트/서버 주소", foreground='#888').grid(row=0, column=2, sticky=tk.E, padx=5)
         self.url_var = tk.StringVar(value="http://target.com:80")
         self.url_entry = ttk.Entry(target_frame, textvariable=self.url_var, width=50)
         self.url_entry.grid(row=0, column=1, columnspan=2, padx=5, sticky=tk.EW)
         
-        ttk.Label(target_frame, text="시간(초):").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.dur_var = tk.StringVar(value="10")
+        ttk.Label(target_frame, text="시간(초):", font=('', 10, 'bold')).grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(target_frame, text="공격 지속 시간 (기본 600초 = 10분, 짧게는 10초, 길게는 3600초)", foreground='#888').grid(row=1, column=2, sticky=tk.E, padx=5)
+        self.dur_var = tk.StringVar(value="600")
         self.dur_entry = ttk.Entry(target_frame, textvariable=self.dur_var, width=10)
         self.dur_entry.grid(row=1, column=1, sticky=tk.W, pady=5)
         
