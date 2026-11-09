@@ -20,7 +20,7 @@ class DossalGUI:
     def __init__(self, root):
         """dossal GUI 초기화 (tkinter)."""
         self.root = root
-        root.title("dossal v4.0 — DoS Attack Tool")
+        root.title("dossal v4.4 — 종합 DoS 공격 도구")
         root.geometry("600x500")
         root.resizable(True, True)
         
@@ -56,6 +56,16 @@ class DossalGUI:
             self.recovery_var.set(False)
             self.threads_var.set('32')
             self.mode_var.set('raw')
+        elif preset == 'super':
+            # SUPER = 파워 + 스텔스 + 스피드 전부 합친 것
+            self.fast_var.set(False)
+            self.spoof_var.set(True)
+            self.stealth_var.set(True)
+            self.recovery_var.set(True)
+            self.threads_var.set('32')
+            self.mode_var.set('auto')
+            self.combo_var.set('super')
+            self.log("⚡ SUPER: 21개 모드 동시 + 스텔스 + 100 스푸핑 IP + 자동회복")
     
     """UI 레이아웃 구성 (tkinter)."""
     def _build_ui(self):
@@ -65,7 +75,7 @@ class DossalGUI:
         main.pack(fill=tk.BOTH, expand=True)
         
         # Target section
-        target_frame = ttk.LabelFrame(main, text="Target", padding=10)
+        target_frame = ttk.LabelFrame(main, text="🎯 대상", padding=10)
         target_frame.pack(fill=tk.X, pady=5)
         
         ttk.Label(target_frame, text="URL:").grid(row=0, column=0, sticky=tk.W)
@@ -73,107 +83,108 @@ class DossalGUI:
         self.url_entry = ttk.Entry(target_frame, textvariable=self.url_var, width=50)
         self.url_entry.grid(row=0, column=1, columnspan=2, padx=5, sticky=tk.EW)
         
-        ttk.Label(target_frame, text="Duration (sec):").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(target_frame, text="시간(초):").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.dur_var = tk.StringVar(value="10")
         self.dur_entry = ttk.Entry(target_frame, textvariable=self.dur_var, width=10)
         self.dur_entry.grid(row=1, column=1, sticky=tk.W, pady=5)
         
         # Profile presets (ONE-CLICK)
-        preset_frame = ttk.LabelFrame(main, text="Profile (one-click)", padding=10)
+        preset_frame = ttk.LabelFrame(main, text="⚡ 원클릭 프리셋", padding=10)
         preset_frame.pack(fill=tk.X, pady=5)
         
         self.preset_var = tk.StringVar(value="power")
-        ttk.Radiobutton(preset_frame, text="🔥 MAX POWER (fastest, strongest)", variable=self.preset_var, value="power", command=self._apply_preset).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=2)
-        ttk.Radiobutton(preset_frame, text="🕵️ STEALTH (hide IP, 100 spoofed, auto-recover)", variable=self.preset_var, value="stealth", command=self._apply_preset).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=2)
-        ttk.Radiobutton(preset_frame, text="⚡ SPEED (max RPS, minimal overhead)", variable=self.preset_var, value="speed", command=self._apply_preset).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="🔥 최대 전력 (최강)", variable=self.preset_var, value="power", command=self._apply_preset).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="🕵️ 스텔스 (IP 숨김 + 스푸핑 + 자동회복)", variable=self.preset_var, value="stealth", command=self._apply_preset).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="⚡ 스피드 (최대 RPS)", variable=self.preset_var, value="speed", command=self._apply_preset).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="💥 SUPER (파워+스텔스+스피드 = 21모드 동시)", variable=self.preset_var, value="super", command=self._apply_preset).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=2)
         
         # Advanced options (collapsible)
-        opt_frame = ttk.LabelFrame(main, text="Advanced", padding=10)
+        opt_frame = ttk.LabelFrame(main, text="⚙️ 고급 옵션", padding=10)
         opt_frame.pack(fill=tk.X, pady=5)
         
         self.fast_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_frame, text="Fast Mode (auto-select best attack)", variable=self.fast_var).grid(row=0, column=0, columnspan=2, sticky=tk.W)
+        ttk.Checkbutton(opt_frame, text="자동 모드 (최적 공격 자동 선택)", variable=self.fast_var).grid(row=0, column=0, columnspan=2, sticky=tk.W)
         
         self.spoof_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_frame, text="Use Spoofed IPs (100)", variable=self.spoof_var).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(opt_frame, text="스푸핑 IP 사용 (100개)", variable=self.spoof_var).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=2)
         
         self.stealth_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_frame, text="Stealth Mode (hide real IP)", variable=self.stealth_var).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(opt_frame, text="스텔스 (실제 IP 숨김)", variable=self.stealth_var).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=2)
         
         self.recovery_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_frame, text="Auto-Recover from 429 (blocked IPs)", variable=self.recovery_var).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(opt_frame, text="자동회복 (429 감지 → IP 교체)", variable=self.recovery_var).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=2)
         
         self.threads_var = tk.StringVar(value="16")
-        ttk.Label(opt_frame, text="Threads:").grid(row=4, column=0, sticky=tk.W, pady=2)
+        ttk.Label(opt_frame, text="프로세스 수:").grid(row=4, column=0, sticky=tk.W, pady=2)
         ttk.Entry(opt_frame, textvariable=self.threads_var, width=10).grid(row=4, column=1, sticky=tk.W, pady=2)
         
         # Multi-target
         self.targets_var = tk.StringVar(value="")
-        ttk.Label(opt_frame, text="Extra targets (comma-sep):").grid(row=5, column=0, sticky=tk.W, pady=2)
+        ttk.Label(opt_frame, text="추가 대상 (쉼표):").grid(row=5, column=0, sticky=tk.W, pady=2)
         ttk.Entry(opt_frame, textvariable=self.targets_var, width=40).grid(row=5, column=1, columnspan=2, sticky=tk.EW, pady=2)
         
         # Proxy (optional)
         self.proxy_var = tk.StringVar(value="")
-        ttk.Label(opt_frame, text="Proxy (optional):").grid(row=6, column=0, sticky=tk.W, pady=2)
+        ttk.Label(opt_frame, text="프록시:").grid(row=6, column=0, sticky=tk.W, pady=2)
         ttk.Entry(opt_frame, textvariable=self.proxy_var, width=40).grid(row=6, column=1, columnspan=2, sticky=tk.EW, pady=2)
         
         # Mode selection (optional, auto if Fast Mode)
         self.mode_var = tk.StringVar(value="auto")
-        ttk.Label(opt_frame, text="Mode (auto = smart select):").grid(row=7, column=0, sticky=tk.W, pady=2)
+        ttk.Label(opt_frame, text="모드 (auto = 자동):").grid(row=7, column=0, sticky=tk.W, pady=2)
         mode_combo = ttk.Combobox(opt_frame, textvariable=self.mode_var, width=30,
                                     values=['auto', 'raw', 'httpsmp', 'https', 'http', 'h2', 'h2mp', 'h3mp', 'grpc', 'grpcmp', 'quic', 'udp', 'tcp', 'syn', 'synack', 'rst', 'fin', 'websocket', 'wsm', 'slowloris', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached'])
         mode_combo.grid(row=7, column=1, sticky=tk.W, pady=2)
         
         # Combo attack
-        ttk.Label(opt_frame, text="Combo:").grid(row=8, column=0, sticky=tk.W, pady=2)
+        ttk.Label(opt_frame, text="조합:").grid(row=8, column=0, sticky=tk.W, pady=2)
         combo_frame = ttk.Frame(opt_frame)
         combo_frame.grid(row=8, column=1, sticky=tk.W, pady=2)
         self.combo_var = tk.StringVar(value="")
-        ttk.Radiobutton(combo_frame, text="Off", variable=self.combo_var, value="").pack(side=tk.LEFT, padx=2)
-        ttk.Radiobutton(combo_frame, text="WEB", variable=self.combo_var, value="web").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="없음", variable=self.combo_var, value="").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="웹", variable=self.combo_var, value="web").pack(side=tk.LEFT, padx=2)
         ttk.Radiobutton(combo_frame, text="TLS", variable=self.combo_var, value="tls").pack(side=tk.LEFT, padx=2)
-        ttk.Radiobutton(combo_frame, text="AMPLIFY", variable=self.combo_var, value="amplify").pack(side=tk.LEFT, padx=2)
-        ttk.Radiobutton(combo_frame, text="FULL", variable=self.combo_var, value="full")
-        ttk.Radiobutton(combo_frame, text="⚡SUPER", variable=self.combo_var, value="super").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="확대", variable=self.combo_var, value="amplify").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="전체", variable=self.combo_var, value="full").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="⚡슈퍼", variable=self.combo_var, value="super").pack(side=tk.LEFT, padx=2)
         
         # Buttons
         btn_frame = ttk.Frame(main)
         btn_frame.pack(fill=tk.X, pady=10)
         
-        self.start_btn = ttk.Button(btn_frame, text="START ATTACK", command=self.start_attack)
+        self.start_btn = ttk.Button(btn_frame, text="▶️ 공격 시작", command=self.start_attack)
         self.start_btn.pack(side=tk.LEFT, padx=5)
         
-        self.stop_btn = ttk.Button(btn_frame, text="STOP", command=self.stop_attack, state=tk.DISABLED)
+        self.stop_btn = ttk.Button(btn_frame, text="⏹️ 중단", command=self.stop_attack, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT, padx=5)
         
-        ttk.Button(btn_frame, text="Simulate (dry-run)", command=self.dry_run).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="📊 시뮬레이션", command=self.dry_run).pack(side=tk.LEFT, padx=5)
         
-        ttk.Button(btn_frame, text="Load Profile", command=self.load_profile).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(btn_frame, text="Save Profile", command=self.save_profile).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(btn_frame, text="Save Report", command=self.save_report).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(btn_frame, text="불러오기", command=self.load_profile).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(btn_frame, text="저장하기", command=self.save_profile).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(btn_frame, text="리포트", command=self.save_report).pack(side=tk.RIGHT, padx=2)
         
         # Progress bar
         self.progress = ttk.Progressbar(main, orient=tk.HORIZONTAL, length=400, mode='determinate')
         self.progress.pack(fill=tk.X, pady=5)
         
         # Stats frame
-        stats_frame = ttk.LabelFrame(main, text="Live Stats", padding=5)
+        stats_frame = ttk.LabelFrame(main, text="📈 실시간 통계", padding=5)
         stats_frame.pack(fill=tk.X, pady=5)
         
-        self.rps_label = ttk.Label(stats_frame, text="RPS: 0", font=('Consolas', 10))
+        self.rps_label = ttk.Label(stats_frame, text="요청/초: 0", font=('Consolas', 10))
         self.rps_label.pack(side=tk.LEFT, padx=10)
         
-        self.pps_label = ttk.Label(stats_frame, text="PPS: 0", font=('Consolas', 10))
+        self.pps_label = ttk.Label(stats_frame, text="패킷/초: 0", font=('Consolas', 10))
         self.pps_label.pack(side=tk.LEFT, padx=10)
         
-        self.conns_label = ttk.Label(stats_frame, text="Conns: 0", font=('Consolas', 10))
+        self.conns_label = ttk.Label(stats_frame, text="연결: 0", font=('Consolas', 10))
         self.conns_label.pack(side=tk.LEFT, padx=10)
         
-        self.err_label = ttk.Label(stats_frame, text="Err: 0", font=('Consolas', 10))
+        self.err_label = ttk.Label(stats_frame, text="에러: 0", font=('Consolas', 10))
         self.err_label.pack(side=tk.LEFT, padx=10)
         
         # Live chart (RPS/PPS real-time)
-        chart_frame = ttk.LabelFrame(main, text="Live Chart", padding=5)
+        chart_frame = ttk.LabelFrame(main, text="📊 실시간 차트", padding=5)
         chart_frame.pack(fill=tk.X, pady=5)
         self.chart = tk.Canvas(chart_frame, height=100, bg='#1a1a2e', highlightthickness=0)
         self.chart.pack(fill=tk.X)
@@ -183,7 +194,7 @@ class DossalGUI:
         self._chart_window = 60  # 60 data points
         
         # Log
-        log_frame = ttk.LabelFrame(main, text="Log", padding=5)
+        log_frame = ttk.LabelFrame(main, text="📋 로그", padding=5)
         log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, font=('Consolas', 9))
@@ -420,8 +431,8 @@ class DossalGUI:
             self.chart.create_line(flat, fill='#00ff88', width=1)
         
         # Labels
-        self.chart.create_text(5, 5, text=f"RPS: {max_rps:,.0f}", anchor=tk.NW, fill='#00d4ff', font=('Consolas', 8))
-        self.chart.create_text(100, 5, text=f"PPS: {max_pps:,.0f}", anchor=tk.NW, fill='#00ff88', font=('Consolas', 8))
+        self.chart.create_text(5, 5, text=f"요청/초: {max_rps:,.0f}", anchor=tk.NW, fill='#00d4ff', font=('Consolas', 8))
+        self.chart.create_text(100, 5, text=f"패킷/초: {max_pps:,.0f}", anchor=tk.NW, fill='#00ff88', font=('Consolas', 8))
     
     """실시간 스탯 업데이트 (RPS/PPS/429/ACTIVE)."""
     def _update_stats(self):
@@ -433,10 +444,10 @@ class DossalGUI:
         progress = min(elapsed / self.duration * 100, 100)
         self.progress.config(value=progress)
         
-        self.rps_label.config(text=f"RPS: {self.stats.get('rps', 0):,.0f}")
-        self.pps_label.config(text=f"PPS: {self.stats.get('packets', 0):,.0f}")
-        self.conns_label.config(text=f"Conns: {self.stats.get('connections_made', 0):,.0f}")
-        self.err_label.config(text=f"Err: {self.stats.get('errors', 0):,.0f}")
+        self.rps_label.config(text=f"요청/초: {self.stats.get('rps', 0):,.0f}")
+        self.pps_label.config(text=f"패킷/초: {self.stats.get('packets', 0):,.0f}")
+        self.conns_label.config(text=f"연결: {self.stats.get('connections_made', 0):,.0f}")
+        self.err_label.config(text=f"에러: {self.stats.get('errors', 0):,.0f}")
         
         # Draw chart
         self._draw_chart()
