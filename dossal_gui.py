@@ -161,22 +161,17 @@ class DossalGUI:
             threads = 4
             message = f"📉 저사양 PC — 스피드 모드 권장 (4 프로세스)"
         
-        # UI에 적용
-        self.preset_var.set(recommended)
-        self.threads_var.set(str(threads))
-        self._apply_preset()
-        
-        # 로그에 표시
-        self.log(f"📋 PC 사양: {cores}코어 / {ram_gb}GB RAM / {os_name} {os_ver}")
-        self.log(f"  → {message}")
-        self.log(f"  → 권장 옵션: {recommended} ({threads} 프로세스)")
+        # 감지 결과 저장 (UI 변수 생성 후에 적용)
+        self._pc_recommended = recommended
+        self._pc_threads = str(threads)
+        self._pc_message = message
         
         return {'cores': cores, 'ram_gb': ram_gb, 'os': os_name}
     
     def _build_ui(self):
         """GUI 레이아웃 생성 (모드/옵션/차트/로그)."""
-        # PC 사양 감지
-        self.pc_specs = self._detect_pc_specs()
+        # PC 사양 감지 (UI 변수가 먼저 생성되어야 함)
+        self._pc_specs_raw = self._detect_pc_specs()
         
         # Main frame
         main = ttk.Frame(self.root, padding=10)
@@ -309,6 +304,13 @@ class DossalGUI:
         
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, font=('Consolas', 9))
         self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+        # PC 사양 기반 권장 옵션 적용 (모든 UI 변수 생성 완료 후)
+        if hasattr(self, '_pc_recommended'):
+            self.preset_var.set(self._pc_recommended)
+            self.threads_var.set(self._pc_threads)
+            self._apply_preset()
+            self.log(f"📋 {self._pc_message}")
     
     """로그 메시지 출력."""
     def log(self, msg):
