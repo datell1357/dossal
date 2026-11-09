@@ -7,6 +7,10 @@ Run: python dossal_gui.py
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import threading, json, time, sys, os, subprocess, re
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # Import dossal engine
 try:
@@ -29,8 +33,13 @@ class DossalGUI:
         self.stats = {'rps': 0, 'pps': 0, 'conns': 0, 'errors': 0, 'packets': 0, 'requests': 0}
         self.start_time = 0
         self.duration = 10
+        self._attack_history = []  # 공격 이력
+        
+        # 공격 이력 파일 경로
+        self._history_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.dossal_history.json')
         
         self._build_ui()
+        self._load_history()
     
     # 모드별 사양 정보
     MODE_SPECS = {
@@ -99,10 +108,9 @@ class DossalGUI:
             self.combo_var.set('')
         specs = self.MODE_SPECS.get(preset)
         if specs:
-            load = self.CPU_LOAD.get(preset, 0.75)
-            self.log(f"[프리셋] {specs['desc']}")
-            self.log(f"  프로세스: {self.threads_var.get()}개 (코어 {getattr(self, '_pc_cores', '?')} × {self.usage_var.get()}% × 부담 {load:.0%})")
-            self.log(f"  예측: {specs['predict']}")
+            self.log(f"[{preset}] {specs['desc']}")
+            self.log(f"  프로세스 {self.threads_var.get()}개 (코어 {getattr(self, '_pc_cores', '?')} × {self.usage_var.get()}%)")
+            self.log(f"  ※ dossal이 모드 수만큼 프로세스 자동 분배")
     
     """UI 레이아웃 구성 (tkinter)."""
     def _detect_pc_specs(self):
@@ -192,18 +200,18 @@ class DossalGUI:
         preset_frame.pack(fill=tk.X, pady=5)
         
         self.preset_var = tk.StringVar(value="super")
-        ttk.Radiobutton(preset_frame, text="💥 SUPER (파워+스텔스+스피드 = 21모드 동시)", variable=self.preset_var, value="super", command=self._apply_preset).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=2)
-        ttk.Radiobutton(preset_frame, text="🔥 최대 전력 (최강)", variable=self.preset_var, value="power", command=self._apply_preset).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=2)
-        ttk.Radiobutton(preset_frame, text="🕵️ 스텔스 (IP 숨김 + 스푸핑 + 자동회복)", variable=self.preset_var, value="stealth", command=self._apply_preset).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=2)
-        ttk.Radiobutton(preset_frame, text="⚡ 스피드 (최대 RPS)", variable=self.preset_var, value="speed", command=self._apply_preset).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="💥 SUPER", variable=self.preset_var, value="super", command=self._apply_preset).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="🔥 파워", variable=self.preset_var, value="power", command=self._apply_preset).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="🕵️ 스텔스", variable=self.preset_var, value="stealth", command=self._apply_preset).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="⚡ 스피드", variable=self.preset_var, value="speed", command=self._apply_preset).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=2)
         
         # PC 자원 사용률 (25/50/75%)
-        usage_frame = ttk.LabelFrame(main, text="🎚️ PC 자원 사용률 (공격에 쓸 코어 비율)", padding=5)
+        usage_frame = ttk.LabelFrame(main, text="🎚️ PC 자원 사용률", padding=5)
         usage_frame.pack(fill=tk.X, pady=5)
         self.usage_var = tk.StringVar(value="50")
-        ttk.Radiobutton(usage_frame, text="25% (여유 — PC가 가볍다)", variable=self.usage_var, value="25", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
-        ttk.Radiobutton(usage_frame, text="50% (기본 — 공격 중 PC 사용 가능)", variable=self.usage_var, value="50", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
-        ttk.Radiobutton(usage_frame, text="75% (강함 — PC가 무거워짐)", variable=self.usage_var, value="75", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
+        ttk.Radiobutton(usage_frame, text="25% 여유", variable=self.usage_var, value="25", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
+        ttk.Radiobutton(usage_frame, text="50% 기본", variable=self.usage_var, value="50", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
+        ttk.Radiobutton(usage_frame, text="75% 강함", variable=self.usage_var, value="75", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
         
         # Advanced options (collapsible)
         opt_frame = ttk.LabelFrame(main, text="⚙️ 고급 옵션", padding=10)
@@ -269,10 +277,8 @@ class DossalGUI:
         ttk.Button(btn_frame, text="불러오기", command=self.load_profile).pack(side=tk.RIGHT, padx=2)
         ttk.Button(btn_frame, text="저장하기", command=self.save_profile).pack(side=tk.RIGHT, padx=2)
         ttk.Button(btn_frame, text="리포트", command=self.save_report).pack(side=tk.RIGHT, padx=2)
-        
-        # Progress bar
-        self.progress = ttk.Progressbar(main, orient=tk.HORIZONTAL, length=400, mode='determinate')
-        self.progress.pack(fill=tk.X, pady=5)
+        ttk.Button(btn_frame, text="이력", command=self.show_history).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(btn_frame, text="테마", command=self.toggle_theme).pack(side=tk.RIGHT, padx=2)
         
         # Stats frame
         stats_frame = ttk.LabelFrame(main, text="📈 실시간 통계", padding=5)
@@ -289,6 +295,25 @@ class DossalGUI:
         
         self.err_label = ttk.Label(stats_frame, text="에러: 0", font=('Consolas', 10))
         self.err_label.pack(side=tk.LEFT, padx=10)
+        
+        # PC 상태 (CPU/RAM)
+        self.cpu_label = ttk.Label(stats_frame, text="CPU: -", font=('Consolas', 9), foreground='#888')
+        self.cpu_label.pack(side=tk.LEFT, padx=10)
+        
+        self.ram_label = ttk.Label(stats_frame, text="RAM: -", font=('Consolas', 9), foreground='#888')
+        self.ram_label.pack(side=tk.LEFT, padx=10)
+        
+        # 서버 응답 상태
+        self.server_status_label = ttk.Label(stats_frame, text="서버: -", font=('Consolas', 9), foreground='#888')
+        self.server_status_label.pack(side=tk.RIGHT, padx=10)
+        
+        # 진행률 + 남은 시간
+        self.progress_frame = ttk.Frame(main)
+        self.progress_frame.pack(fill=tk.X, pady=5)
+        self.progress = ttk.Progressbar(self.progress_frame, orient=tk.HORIZONTAL, mode='determinate')
+        self.progress.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.time_left_label = ttk.Label(self.progress_frame, text="0:00", font=('Consolas', 9), width=6)
+        self.time_left_label.pack(side=tk.RIGHT, padx=(5, 0))
         
         # Live chart (RPS/PPS real-time)
         chart_frame = ttk.LabelFrame(main, text="📊 실시간 차트", padding=5)
@@ -454,11 +479,28 @@ class DossalGUI:
     
     """공격 완료 핸들러."""
     def _on_complete(self):
-        """공격 완료 처리 (버튼 리셋 + 리포트 저장)."""
+        """공격 완료 처리 (버튼 리셋 + 이력 저장 + 완료 알림)."""
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
-        self.progress.config(value=self.duration)
-        self.log("Attack finished")
+        self.progress.config(value=100)
+        
+        # 이력 저장
+        self._save_history()
+        
+        # 완료 알림 (messagebox)
+        rps = self.stats.get('rps', 0)
+        pkts = self.stats.get('packets', 0)
+        errs = self.stats.get('errors', 0)
+        self.log("✅ 공격 완료!")
+        self.log(f"   RPS: {rps:,.0f} | 패킷: {pkts:,.0f} | 에러: {errs:,.0f}")
+        messagebox.showinfo(
+            "공격 완료",
+            f"✅ 공격 종료!\n\n"
+            f"요청/초: {rps:,.0f}\n"
+            f"패킷: {pkts:,.0f}\n"
+            f"에러: {errs:,.0f}\n\n"
+            f"자세한 내용은 로그를 확인하세요."
+        )
     
     def dry_run(self):
         """공격 없이 시뮬레이션 (패킷 수/시간/영향력 예측)."""
@@ -547,9 +589,9 @@ class DossalGUI:
         self.chart.create_text(5, 5, text=f"요청/초: {max_rps:,.0f}", anchor=tk.NW, fill='#00d4ff', font=('Consolas', 8))
         self.chart.create_text(100, 5, text=f"패킷/초: {max_pps:,.0f}", anchor=tk.NW, fill='#00ff88', font=('Consolas', 8))
     
-    """실시간 스탯 업데이트 (RPS/PPS/429/ACTIVE)."""
+    """실시간 스탯 업데이트 (RPS/PPS/429/ACTIVE + CPU/RAM + 남은 시간)."""
     def _update_stats(self):
-        """실시간 스탯 수집 (RPS/PPS/에러 + 차트/레이블 업데이트)."""
+        """실시간 스탯 수집 (RPS/PPS/에러 + 차트/레이블/PC 상태 업데이트)."""
         if not self.running:
             return
         
@@ -557,22 +599,138 @@ class DossalGUI:
         progress = min(elapsed / self.duration * 100, 100)
         self.progress.config(value=progress)
         
+        # 남은 시간 표시
+        remaining = max(0, self.duration - int(elapsed))
+        mins, secs = divmod(remaining, 60)
+        self.time_left_label.config(text=f"{mins}:{secs:02d}")
+        
         self.rps_label.config(text=f"요청/초: {self.stats.get('rps', 0):,.0f}")
         self.pps_label.config(text=f"패킷/초: {self.stats.get('packets', 0):,.0f}")
         self.conns_label.config(text=f"연결: {self.stats.get('connections_made', 0):,.0f}")
         self.err_label.config(text=f"에러: {self.stats.get('errors', 0):,.0f}")
         
+        # PC 상태 (CPU/RAM)
+        if psutil:
+            cpu_pct = psutil.cpu_percent(interval=None)
+            ram = psutil.virtual_memory()
+            self.cpu_label.config(text=f"CPU: {cpu_pct:.0f}%")
+            self.ram_label.config(text=f"RAM: {ram.percent:.0f}%")
+        
         # Draw chart
         self._draw_chart()
         
-        # Show 429 IP count if available
+        # Show 429 IP count + server status
         if '429_ips' in self.stats:
-            extra = f" 429: {self.stats['429_ips']}"
-            if 'active_ips' in self.stats:
-                extra += f" ACTIVE: {self.stats['active_ips']}"
+            ip429 = self.stats['429_ips']
+            active = self.stats.get('active_ips', '?')
+            if ip429 == 0:
+                status, color = "통과 ✓", '#00ff88'
+            elif ip429 < 10:
+                status, color = f"일부 차단 ({ip429} IP)", '#ffff00'
+            else:
+                status, color = f"차단 중 ({ip429} IP 429)", '#ff4444'
+            self.server_status_label.config(text=f"서버: {status}", foreground=color)
+            extra = f" 429: {ip429}"
+            if active != '?':
+                extra += f" ACTIVE: {active}"
             self.err_label.config(text=f"Err: {self.stats.get('errors', 0):,.0f}{extra}")
         
         self.root.after(500, self._update_stats)
+    
+    """공격 이력 저장."""
+    def _save_history(self):
+        """공격 결과를 이력 파일에 저장 (최근 5개)."""
+        try:
+            history = self._load_history()
+            entry = {
+                'time': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'url': self.url_var.get().strip(),
+                'mode': self.combo_var.get() or self.mode_var.get(),
+                'duration': self.duration,
+                'threads': int(self.threads_var.get()),
+                'rps': self.stats.get('rps', 0),
+                'packets': self.stats.get('packets', 0),
+                'errors': self.stats.get('errors', 0),
+            }
+            history.insert(0, entry)
+            history = history[:5]  # 최근 5개만
+            with open(self._history_file, 'w') as f:
+                json.dump(history, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+    
+    """공격 이력 불러오기."""
+    def _load_history(self):
+        """이력 파일에서 공격 기록 불러오기."""
+        try:
+            if os.path.exists(self._history_file):
+                with open(self._history_file) as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return []
+    
+    """공격 이력 표시."""
+    def show_history(self):
+        """최근 공격 이력을 팝업으로 표시."""
+        history = self._load_history()
+        if not history:
+            messagebox.showinfo("공격 이력", "이력이 없습니다.\n공격을 실행하면 여기에 기록됩니다.")
+            return
+        
+        # 팝업 창
+        win = tk.Toplevel(self.root)
+        win.title("📜 최근 공격 이력 (5개)")
+        win.geometry("500x300")
+        
+        text = scrolledtext.ScrolledText(win, font=('Consolas', 10), height=12)
+        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        for i, h in enumerate(history, 1):
+            time_str = h.get('time', '?')[5:]  # HH:MM:SS
+            url = h.get('url', '?')
+            mode = h.get('mode', '?')
+            dur = h.get('duration', 0)
+            rps = h.get('rps', 0)
+            pkts = h.get('packets', 0)
+            errs = h.get('errors', 0)
+            text.insert(tk.END, f"{i}. [{time_str}] {url[:30]}\n")
+            text.insert(tk.END, f"   모드: {mode} | 시간: {dur}초 | 프로세스: {h.get('threads', '?')}\n")
+            text.insert(tk.END, f"   RPS: {rps:,.0f} | 패킷: {pkts:,.0f} | 에러: {errs:,.0f}\n\n")
+        
+        text.config(state=tk.DISABLED)
+    
+    """테마 전환 (다크/라이트)."""
+    def toggle_theme(self):
+        """다크/라이트 테마 전환."""
+        self._is_dark = getattr(self, '_is_dark', True)
+        self._is_dark = not self._is_dark
+        
+        style = ttk.Style()
+        if self._is_dark:
+            # 다크 테마
+            style.theme_use('clam')
+            self.root.configure(bg='#1a1a2e')
+            style.configure('TFrame', background='#1a1a2e')
+            style.configure('TLabel', background='#1a1a2e', foreground='white')
+            style.configure('TButton', background='#2a2a4e', foreground='white')
+            style.configure('TEntry', fieldbackground='#2a2a4e', foreground='white')
+            style.configure('TCheckbutton', background='#1a1a2e', foreground='white')
+            style.configure('TRadiobutton', background='#1a1a2e', foreground='white')
+            style.configure('TLabelFrame', background='#1a1a2e', foreground='white')
+            self.log("테마: 다크")
+        else:
+            # 라이트 테마
+            style.theme_use('clam')
+            self.root.configure(bg='#f5f5f5')
+            style.configure('TFrame', background='#f5f5f5')
+            style.configure('TLabel', background='#f5f5f5', foreground='black')
+            style.configure('TButton', background='#e0e0e0', foreground='black')
+            style.configure('TEntry', fieldbackground='white', foreground='black')
+            style.configure('TCheckbutton', background='#f5f5f5', foreground='black')
+            style.configure('TRadiobutton', background='#f5f5f5', foreground='black')
+            style.configure('TLabelFrame', background='#f5f5f5', foreground='black')
+            self.log("테마: 라이트")
     
     def save_profile(self):
         """현재 설정을 프로파일(.json)로 저장."""
