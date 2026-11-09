@@ -53,9 +53,9 @@ class DossalGUI:
             'predict': '~140k RPS (16코어 기준)',
         },
         'super': {
-            'desc': '21개 모드 동시 + 스텔스 + 스푸핑',
+            'desc': '21개 모드 동시 + 스텔스 + 스푸핑 + 자동회복',
             'min': '8코어 / 8GB RAM / 500Mbps',
-            'rec': '16코어+ / 16GB+ RAM / 1Gbps+',
+            'rec': '16코어 / 8GB+ RAM / 500Mbps+ (프로세스 16)',
             'predict': '~300k RPS + 300k PPS (16코어 기준)',
         },
     }
@@ -89,7 +89,7 @@ class DossalGUI:
             self.spoof_var.set(True)
             self.stealth_var.set(True)
             self.recovery_var.set(True)
-            self.threads_var.set('32')
+            self.threads_var.set('16')
             self.mode_var.set('auto')
             self.combo_var.set('super')
 
@@ -102,8 +102,82 @@ class DossalGUI:
             self.log(f"  예측: {specs['predict']}")
     
     """UI 레이아웃 구성 (tkinter)."""
+    def _detect_pc_specs(self):
+        """PC 사양 자동 감지 + 권장 옵션 적용."""
+        import os
+        import platform
+        
+        # CPU 코어 수
+        try:
+            cores = os.cpu_count() or 4
+        except:
+            cores = 4
+        
+        # RAM 감지 (Mac/Windows/Linux)
+        ram_gb = 8  # 기본값
+        try:
+            if platform.system() == 'Darwin':
+                # macOS: sysctl hw.memsize
+                import subprocess
+                r = subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, text=True, timeout=3)
+                if r.returncode == 0:
+                    ram_gb = int(r.stdout.strip()) // (1024 ** 3)
+            elif platform.system() == 'Windows':
+                # Windows: WMI
+                r = subprocess.run(['wmic', 'computersystem', 'get', 'TotalPhysicalMemory'], capture_output=True, text=True, timeout=3)
+                if r.returncode == 0:
+                    lines = r.stdout.strip().split('\n')
+                    if len(lines) > 1:
+                        ram_gb = int(lines[1].strip()) // (1024 ** 3)
+            else:
+                # Linux: /proc/meminfo
+                with open('/proc/meminfo') as f:
+                    for line in f:
+                        if line.startswith('MemTotal:'):
+                            ram_gb = int(line.split()[1]) // (1024 ** 2)
+                            break
+        except:
+            ram_gb = 8
+        
+        # OS 정보
+        os_name = platform.system()
+        os_ver = platform.version()[:10]
+        
+        # 권장 옵션 결정
+        if cores >= 16 and ram_gb >= 16:
+            recommended = 'super'
+            threads = 16
+            message = f"💪 강력한 PC! SUPER 모드 권장 (16 프로세스)"
+        elif cores >= 8 and ram_gb >= 8:
+            recommended = 'super'
+            threads = 16
+            message = f"✅ 좋은 PC! SUPER 모드 가능 (16 프로세스)"
+        elif cores >= 4 and ram_gb >= 4:
+            recommended = 'power'
+            threads = 8
+            message = f"⚠️ 기본 PC — 최대 전력 모드 권장 (8 프로세스)"
+        else:
+            recommended = 'speed'
+            threads = 4
+            message = f"📉 저사양 PC — 스피드 모드 권장 (4 프로세스)"
+        
+        # UI에 적용
+        self.preset_var.set(recommended)
+        self.threads_var.set(str(threads))
+        self._apply_preset()
+        
+        # 로그에 표시
+        self.log(f"📋 PC 사양: {cores}코어 / {ram_gb}GB RAM / {os_name} {os_ver}")
+        self.log(f"  → {message}")
+        self.log(f"  → 권장 옵션: {recommended} ({threads} 프로세스)")
+        
+        return {'cores': cores, 'ram_gb': ram_gb, 'os': os_name}
+    
     def _build_ui(self):
         """GUI 레이아웃 생성 (모드/옵션/차트/로그)."""
+        # PC 사양 감지
+        self.pc_specs = self._detect_pc_specs()
+        
         # Main frame
         main = ttk.Frame(self.root, padding=10)
         main.pack(fill=tk.BOTH, expand=True)
@@ -128,11 +202,11 @@ class DossalGUI:
         preset_frame = ttk.LabelFrame(main, text="⚡ 원클릭 프리셋", padding=10)
         preset_frame.pack(fill=tk.X, pady=5)
         
-        self.preset_var = tk.StringVar(value="power")
-        ttk.Radiobutton(preset_frame, text="🔥 최대 전력 (최강)", variable=self.preset_var, value="power", command=self._apply_preset).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=2)
-        ttk.Radiobutton(preset_frame, text="🕵️ 스텔스 (IP 숨김 + 스푸핑 + 자동회복)", variable=self.preset_var, value="stealth", command=self._apply_preset).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=2)
-        ttk.Radiobutton(preset_frame, text="⚡ 스피드 (최대 RPS)", variable=self.preset_var, value="speed", command=self._apply_preset).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=2)
-        ttk.Radiobutton(preset_frame, text="💥 SUPER (파워+스텔스+스피드 = 21모드 동시)", variable=self.preset_var, value="super", command=self._apply_preset).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=2)
+        self.preset_var = tk.StringVar(value="super")
+        ttk.Radiobutton(preset_frame, text="💥 SUPER (파워+스텔스+스피드 = 21모드 동시)", variable=self.preset_var, value="super", command=self._apply_preset).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="🔥 최대 전력 (최강)", variable=self.preset_var, value="power", command=self._apply_preset).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="🕵️ 스텔스 (IP 숨김 + 스푸핑 + 자동회복)", variable=self.preset_var, value="stealth", command=self._apply_preset).grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ttk.Radiobutton(preset_frame, text="⚡ 스피드 (최대 RPS)", variable=self.preset_var, value="speed", command=self._apply_preset).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=2)
         
         # Advanced options (collapsible)
         opt_frame = ttk.LabelFrame(main, text="⚙️ 고급 옵션", padding=10)
