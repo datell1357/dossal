@@ -85,7 +85,7 @@ class DossalGUI:
             self.threads_var.set('32')
             self.mode_var.set('raw')
         elif preset == 'super':
-            self.fast_var.set(False)
+            self.fast_var.set(True)
             self.spoof_var.set(True)
             self.stealth_var.set(True)
             self.recovery_var.set(True)
