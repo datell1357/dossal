@@ -193,7 +193,8 @@ heavy-victim/     # CPU-heavy victim (port 8082)
 ```
 
 ## 버전 이력
-- **v4.3**: jitter 4곳 적용 (raw/httpsmp/h2/http/https), 74개 함수 한글 docstring
+- **v4.4**: 한국어 옵션 21개 + SUPER 모드 (21모드 동시), GUI ⚡SUPER 버튼
+- **v4.3**: jitter 4곳 적용 (raw/httpsmp/h2/http/https), 한글 docstring 112/112
 - **v4.2**: TLS 1.3 0-RTT, h3mp, GUI combo, dossal_net GUI, --rotate-interval, impact score
 - **v4.1**: h2mp, L4 amplification (dns/icmp/ssdp/ntp/memcached), TLS fingerprint, CF bypass, 페이로드 랜덤화, 멀티 타겟, 프록시, SYN 스푸핑, GUI 차트, 프로파일
 - **v3.16**: 17모드, 멀티모드, 자동 모드, 벤치 638.9 PEAK
