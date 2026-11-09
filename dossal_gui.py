@@ -32,8 +32,36 @@ class DossalGUI:
         
         self._build_ui()
     
+    # 모드별 사양 정보
+    MODE_SPECS = {
+        'power': {
+            'desc': 'combo(raw+udp+syn)',
+            'min': '4코어 / 4GB RAM / 100Mbps',
+            'rec': '8코어 / 16GB RAM / 500Mbps',
+            'predict': '~50k RPS (8코어 기준)',
+        },
+        'stealth': {
+            'desc': 'auto + 스푸핑 100 + 자동회복',
+            'min': '4코어 / 4GB RAM / 100Mbps',
+            'rec': '8코어 / 16GB RAM / 500Mbps',
+            'predict': '~10k RPS (429 우회)',
+        },
+        'speed': {
+            'desc': 'raw 단일 모드',
+            'min': '8코어 / 8GB RAM / 500Mbps',
+            'rec': '16코어 / 16GB RAM / 1Gbps',
+            'predict': '~140k RPS (16코어 기준)',
+        },
+        'super': {
+            'desc': '21개 모드 동시 + 스텔스 + 스푸핑',
+            'min': '8코어 / 8GB RAM / 500Mbps',
+            'rec': '16코어+ / 16GB+ RAM / 1Gbps+',
+            'predict': '~300k RPS + 300k PPS (16코어 기준)',
+        },
+    }
+
     def _apply_preset(self):
-        """인텐시트 프리셋 적용 (light/balanced/max)."""
+        """인텐시트 프리셋 적용 + 사양 정보 표시."""
         preset = self.preset_var.get()
         if preset == 'power':
             self.fast_var.set(True)
@@ -57,7 +85,6 @@ class DossalGUI:
             self.threads_var.set('32')
             self.mode_var.set('raw')
         elif preset == 'super':
-            # SUPER = 파워 + 스텔스 + 스피드 전부 합친 것
             self.fast_var.set(False)
             self.spoof_var.set(True)
             self.stealth_var.set(True)
@@ -65,7 +92,14 @@ class DossalGUI:
             self.threads_var.set('32')
             self.mode_var.set('auto')
             self.combo_var.set('super')
-            self.log("⚡ SUPER: 21개 모드 동시 + 스텔스 + 100 스푸핑 IP + 자동회복")
+
+        # 사양 정보 로그 출력
+        specs = self.MODE_SPECS.get(preset)
+        if specs:
+            self.log(f"[프리셋] {specs['desc']}")
+            self.log(f"  최소: {specs['min']}")
+            self.log(f"  권장: {specs['rec']}")
+            self.log(f"  예측: {specs['predict']}")
     
     """UI 레이아웃 구성 (tkinter)."""
     def _build_ui(self):
