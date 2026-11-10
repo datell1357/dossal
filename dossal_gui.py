@@ -257,6 +257,25 @@ class DossalGUI:
         ttk.Label(opt_frame, text="프록시:").grid(row=6, column=0, sticky=tk.W, pady=2)
         ttk.Entry(opt_frame, textvariable=self.proxy_var, width=40).grid(row=6, column=1, columnspan=2, sticky=tk.EW, pady=2)
         
+        # v5.0: Proxy Pool
+        self.proxy_file_var = tk.StringVar(value="")
+        ttk.Label(opt_frame, text="프록시 파일:").grid(row=7, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(opt_frame, textvariable=self.proxy_file_var, width=40).grid(row=7, column=1, columnspan=2, sticky=tk.EW, pady=2)
+        
+        # v5.0: Browser Fingerprint
+        self.browser_var = tk.StringVar(value="chrome")
+        ttk.Label(opt_frame, text="지문:").grid(row=8, column=0, sticky=tk.W, pady=2)
+        ttk.Combobox(opt_frame, textvariable=self.browser_var, width=10,
+                      values=['chrome', 'firefox', 'safari']).grid(row=8, column=1, sticky=tk.W, pady=2)
+        
+        # v5.0: Cache Bypass
+        self.cache_bypass_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(opt_frame, text="캐시 우회 (쿼리 변형)", variable=self.cache_bypass_var).grid(row=8, column=2, sticky=tk.E, pady=2)
+        
+        # v5.0: Origin Discovery
+        self.discover_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(opt_frame, text="Origin 탐지 (DNS/SSL)", variable=self.discover_var).grid(row=9, column=0, columnspan=3, sticky=tk.W, pady=2)
+        
         # Mode selection (optional, auto if Fast Mode)
         self.mode_var = tk.StringVar(value="auto")
         ttk.Label(opt_frame, text="모드 (auto = 자동):").grid(row=7, column=0, sticky=tk.W, pady=2)
@@ -409,6 +428,21 @@ class DossalGUI:
         proxy = self.proxy_var.get().strip()
         if proxy:
             cmd.extend(['--proxy', proxy])
+        
+        # v5.0 options
+        proxy_file = self.proxy_file_var.get().strip()
+        if proxy_file:
+            cmd.extend(['--proxy-file', proxy_file])
+        
+        browser = self.browser_var.get()
+        if browser != 'chrome':
+            cmd.extend(['--browser', browser])
+        
+        if self.cache_bypass_var.get():
+            cmd.append('--cache-bypass')
+        
+        if self.discover_var.get():
+            cmd.append('--discover')
         
         targets = self.targets_var.get().strip()
         if targets:

