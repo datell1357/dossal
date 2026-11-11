@@ -276,6 +276,14 @@ class DossalGUI:
         self.discover_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(opt_frame, text="Origin 탐지 (DNS/SSL)", variable=self.discover_var).grid(row=9, column=0, columnspan=3, sticky=tk.W, pady=2)
         
+        # v8.0: New options
+        self.adaptive_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(opt_frame, text="적응형 (자동 RPS)", variable=self.adaptive_var).grid(row=10, column=0, sticky=tk.W, pady=2)
+        self.learn_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(opt_frame, text="AI 학습", variable=self.learn_var).grid(row=10, column=1, sticky=tk.W, pady=2)
+        self.auto_full_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(opt_frame, text="완전 자동", variable=self.auto_full_var).grid(row=10, column=2, sticky=tk.W, pady=2)
+        
         # Mode selection (optional, auto if Fast Mode)
         self.mode_var = tk.StringVar(value="auto")
         ttk.Label(opt_frame, text="모드 (auto = 자동):").grid(row=7, column=0, sticky=tk.W, pady=2)
@@ -443,6 +451,14 @@ class DossalGUI:
         
         if self.discover_var.get():
             cmd.append('--discover')
+        
+        # v8.0: New options
+        if self.adaptive_var.get():
+            cmd.append('--adaptive')
+        if self.learn_var.get():
+            cmd.append('--learn')
+        if self.auto_full_var.get():
+            cmd.append('--auto-full')
         
         targets = self.targets_var.get().strip()
         if targets:

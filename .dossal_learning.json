@@ -1,0 +1,13 @@
+[
+  {
+    "url": "http://localhost:8080",
+    "mode": "raw",
+    "threads": 4,
+    "rps": 86832.67,
+    "packets": 0,
+    "errors": 0,
+    "duration": 3,
+    "ts": 1794381638.097353,
+    "rps_per_thread": 21708.1675
+  }
+]
