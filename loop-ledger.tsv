@@ -140,3 +140,4 @@ b60f08f	1257.5	19:46:49	v9.1-bench-L4-tuning
 ee6398b	1567.2	19:55:14	v10.0-httpsmp32p+wsm+impact
 da80ca3	1677.2	19:57:30	v11.0-h2mp32p+bench-opt
 54295cf	1639.5	19:59:58	v12.0-final-bench
+f1e5d5d	1255.9	22:43:46	v12.1-rst-fix-bench

