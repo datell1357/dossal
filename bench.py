@@ -27,9 +27,9 @@ TESTS = [
     ('wsm',       'ws://127.0.0.1:8090',        1, 2, {'threads': 4}),
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
     # L4 modes (after L7)
-    ('syn',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),
+    ('syn',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),  # 8p (CPU contention in full bench)
     ('rst',       'tcp://127.0.0.1:8080',      10, 2, {'threads': 8}),
-    ('fin',       'tcp://127.0.0.1:8080',       10, 2, {'threads': 8}),
+    ('fin',       'tcp://127.0.0.1:8080',       10, 2, {'threads': 8}),  # 8p (CPU contention in full bench)
     ('tcp',       'tcp://127.0.0.1:8080',       10, 2, {'threads': 8}),
     ('quic',      'udp://127.0.0.1:4443',      1, 2, {'threads': 8}),
     ('udp',         'udp://127.0.0.1:9999',     1, 2, {'threads': 8}),
