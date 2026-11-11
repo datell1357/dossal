@@ -2653,6 +2653,7 @@ async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
     total_msgs = 0
     for msgs, errors in results:
         stats.ws_msgs += msgs
+        stats.requests += msgs  # v9.0: wsm RPS 표시
         stats.errors += errors
         total_msgs += msgs
     stats.conns += n_procs

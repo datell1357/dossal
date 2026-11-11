@@ -19,9 +19,9 @@ DOSSAL = os.path.join(LAB, 'dossal.py')
 # Mode configs: (mode, url, connections, duration)
 TESTS = [
     # L7 modes first (fresh victims)
-    ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 16}),  # 16p optimal in bench (leaves CPU for other modes)
+    ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 16}),  # 16p (leaves CPU for other modes)
     ('http',      'http://127.0.0.1:8080',     600, 2),  # 600c optimal (84.9k RPS)
-    ('httpsmp',   'https://127.0.0.1:8443',    1, 5, {'threads': 16}),  # 16p optimal for bench total
+    ('httpsmp',   'https://127.0.0.1:8443',    1, 5, {'threads': 32}),  # 32p optimal (36k RPS vs 8k at 16p)
     ('h2',        'https://127.0.0.1:8444',    600, 2),  # 600c optimal (34.9k RPS)
     ('grpcmp',    'https://127.0.0.1:50051/',  1, 2, {'threads': 16}),
     ('wsm',       'ws://127.0.0.1:8090',        1, 2, {'threads': 4}),
@@ -133,7 +133,7 @@ def main():
 
     # Impact score: attack heavy-victim with http, measure
     impact_cmd = [PY, DOSSAL, '--mode', 'http', '--url', 'http://127.0.0.1:8082',
-                  '--connections', '20', '--duration', '3', '--impact']
+                  '--connections', '50', '--duration', '3', '--impact']
     try:
         r = subprocess.run(impact_cmd, capture_output=True, text=True, timeout=30)
         out = r.stdout.strip()
