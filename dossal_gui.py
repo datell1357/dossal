@@ -284,6 +284,13 @@ class DossalGUI:
         self.auto_full_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(opt_frame, text="완전 자동", variable=self.auto_full_var).grid(row=10, column=2, sticky=tk.W, pady=2)
         
+        # v8.4: Distributed mode
+        self.dist_mode_var = tk.StringVar(value="off")
+        ttk.Label(opt_frame, text="분산:").grid(row=11, column=0, sticky=tk.W, pady=2)
+        dist_combo = ttk.Combobox(opt_frame, textvariable=self.dist_mode_var, width=12,
+            values=['off', 'coordinator', 'worker'])
+        dist_combo.grid(row=11, column=1, sticky=tk.W, pady=2)
+        
         # Mode selection (optional, auto if Fast Mode)
         self.mode_var = tk.StringVar(value="auto")
         ttk.Label(opt_frame, text="모드 (auto = 자동):").grid(row=7, column=0, sticky=tk.W, pady=2)
@@ -459,6 +466,11 @@ class DossalGUI:
             cmd.append('--learn')
         if self.auto_full_var.get():
             cmd.append('--auto-full')
+        
+        # v8.4: Distributed mode
+        dist_mode = self.dist_mode_var.get()
+        if dist_mode != 'off':
+            cmd.extend(['--dist-mode', dist_mode])
         
         targets = self.targets_var.get().strip()
         if targets:

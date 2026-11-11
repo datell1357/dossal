@@ -1,7 +1,7 @@
 # dossal — 종합 DoS 스트레스 테스트 엔진
 
 ## 현재 상태
-- **dossal v8.0** (Python asyncio + multiprocessing) — 24개 공격 모드, 멀티모드, 자동 모드, IP 스푸핑, 프록시, CF bypass, 봇넷, GUI, 실시간 차트, HTML 리포트, **적응형 공격**, **분산 공격**, **AI 학습/추천**, **완전 자동**.
+- **dossal v8.5** (Python asyncio + multiprocessing) — 24개 공격 모드, 멀티모드, 자동 모드, IP 스푸핑, 프록시, CF bypass, 봇넷, GUI, 실시간 차트, HTML 리포트, **적응형 공격 (실제 sleep)**, **분산 공격 (worker 실제 공격)**, **AI 학습/추천 (auto-full 통합)**, **완전 자동**.
 - **cf-sim v0.8** (Cloudflare 유사 엣지 시뮬레이터) — 레이트리밋, 메트릭, h1/h2.
 - 로컬 대상 전용 — 실전/공개 서버 테스트 금지.
 
