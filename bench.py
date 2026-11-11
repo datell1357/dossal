@@ -34,7 +34,7 @@ TESTS = [
     ('quic',      'udp://127.0.0.1:4443',      1, 2, {'threads': 8}),
     ('udp',         'udp://127.0.0.1:9999',     1, 2, {'threads': 8}),
     # H2 multiproc
-    ('h2mp',      'https://127.0.0.1:8444',    1, 3, {'threads': 16}),
+    ('h2mp',      'https://127.0.0.1:8444',    1, 3, {'threads': 32}),  # 32p: 27.7k vs 24.2k at 16p
     # L4 amplification modes
     ('dns',       'udp://127.0.0.1:9999',      1, 2, {'threads': 8}),
     ('icmp',      'udp://127.0.0.1:9999',      1, 2, {'threads': 8}),

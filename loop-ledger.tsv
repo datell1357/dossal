@@ -137,3 +137,4 @@ db7b43e	544.1	15:17:31	v4.1-r3
 490b0d0	554.3	19:35:47	v8.5-baseline-bench
 2956bb3	1299.2	19:43:28	v9.0-wsm-rps+impact50c+httpsmp32p
 b60f08f	1257.5	19:46:49	v9.1-bench-L4-tuning
+ee6398b	1567.2	19:55:14	v10.0-httpsmp32p+wsm+impact
