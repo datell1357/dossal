@@ -2830,11 +2830,17 @@ def _mp_rst_flood(args_tuple):
             conns += 1
         except (ConnectionRefusedError, socket.timeout, OSError) as e:
             # Connection failed - victim busy, not a real error
+            # v12.1: 더 많은 errno를 "예상된" 것으로 처리
             if isinstance(e, OSError) and e.errno not in (
                 _errno.ECONNREFUSED, _errno.ETIMEDOUT,
-                _errno.EAGAIN, _errno.ECONNRESET
+                _errno.EAGAIN, _errno.ECONNRESET,
+                _errno.ENOBUFS, _errno.EMFILE, _errno.ENFILE,
+                _errno.EPIPE, _errno.ECONNABORTED
             ):
                 errors += 1
+        except Exception:
+            # v12.1: 기타 예외도 무시 (RST 공격은 best-effort)
+            pass
         finally:
             if s:
                 try:
