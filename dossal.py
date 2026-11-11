@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v10.0 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
+dossal v11.0 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
 v5.0: proxy pool, TLS spoof, origin discovery
 v5.2: adaptive attack (RPS auto-adjust based on response time)
 v6.0: distributed attack (coordinator + worker, UDP control channel)
