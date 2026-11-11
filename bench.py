@@ -20,9 +20,9 @@ DOSSAL = os.path.join(LAB, 'dossal.py')
 TESTS = [
     # L7 modes first (fresh victims)
     ('raw',       'http://127.0.0.1:8080',      1, 2, {'threads': 16}),  # 16p (leaves CPU for other modes)
-    ('http',      'http://127.0.0.1:8080',     600, 2),  # 600c optimal (84.9k RPS)
+    ('http',      'http://127.0.0.1:8080',     600, 2),  # 600c (stable)
     ('httpsmp',   'https://127.0.0.1:8443',    1, 5, {'threads': 32}),  # 32p: 17-37k RPS (variable)
-    ('h2',        'https://127.0.0.1:8444',    600, 2),  # 600c optimal (34.9k RPS)
+    ('h2',        'https://127.0.0.1:8444',    600, 2),  # 600c (stable)
     ('grpcmp',    'https://127.0.0.1:50051/',  1, 2, {'threads': 16}),
     ('wsm',       'ws://127.0.0.1:8090',        1, 2, {'threads': 4}),
     ('slowloris', 'http://127.0.0.1:8080',     10, 2),
