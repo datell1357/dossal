@@ -20,5 +20,16 @@
     "duration": 2,
     "ts": 1794455860.683271,
     "rps_per_thread": 222.25
+  },
+  {
+    "url": "http://127.0.0.1:8080",
+    "mode": "raw+syn",
+    "threads": 8,
+    "rps": 3925.67,
+    "packets": 0,
+    "errors": 0,
+    "duration": 3,
+    "ts": 1794455936.026331,
+    "rps_per_thread": 490.70875
   }
 ]

