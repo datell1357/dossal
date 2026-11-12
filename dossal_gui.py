@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v4.0 — GUI DoS Attack Tool (Windows-first, cross-platform)
+dossal v12.9 — GUI DoS Attack Tool (Windows-first, cross-platform)
 Requires: Python 3.8+, h2 (pip install h2)
 Run: python dossal_gui.py
 """
