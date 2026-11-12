@@ -1045,7 +1045,9 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
     req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n"
            f"User-Agent: dossal/{VERSION}\r\n\r\n")
     req_bytes = req.encode()
-
+    import time as _ht
+    _http_start = _ht.time()
+    # v13.3: 429/Connection-close 시 재연결 (https와 동일)
     while not stop.is_set():
         try:
             async def _write_read():
@@ -1055,12 +1057,20 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
                 return await _read_http_response(reader)
             resp = await asyncio.wait_for(_write_read(), timeout=10.0)
             if not resp:
-                stats.errors += 1
+                # v13.3: 비어있는 응답 = 서버가 연결을 닫음 → 재연결
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                reader, writer = await asyncio.open_connection(host, port)
                 continue
             stats.requests += 1
             stats.bytes += len(resp)
         except (asyncio.TimeoutError, Exception):
-            stats.errors += 1
+            # v13.3: 종료 시점(0.3초 이내)의 예외는 정규 종료
+            if not stop.is_set() and (_ht.time() - _http_start) < (duration - 0.3):
+                stats.errors += 1
             break
     if writer.transport:
         writer.transport.abort()
