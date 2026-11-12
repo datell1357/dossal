@@ -1,13 +1,24 @@
 [
   {
-    "url": "http://localhost:8080",
-    "mode": "raw",
-    "threads": 4,
-    "rps": 86832.67,
+    "url": "http://127.0.0.1:8080",
+    "mode": "raw+syn",
+    "threads": 8,
+    "rps": 7695.0,
     "packets": 0,
     "errors": 0,
-    "duration": 3,
-    "ts": 1794381638.097353,
-    "rps_per_thread": 21708.1675
+    "duration": 2,
+    "ts": 1794455837.104584,
+    "rps_per_thread": 961.875
+  },
+  {
+    "url": "http://127.0.0.1:8080",
+    "mode": "raw+syn",
+    "threads": 8,
+    "rps": 1778.0,
+    "packets": 0,
+    "errors": 0,
+    "duration": 2,
+    "ts": 1794455860.683271,
+    "rps_per_thread": 222.25
   }
 ]

