@@ -897,7 +897,7 @@ from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 from h2.exceptions import FlowControlError  # v13.1: gRPC flow control 대응
 
-VERSION = "13.4"
+VERSION = "13.5"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -3892,6 +3892,7 @@ examples:
 
     async def _run_all():
         """공격 + 모니터링 + 리포트 전체 파이프라인."""
+        global _PROXY_POOL, _ADAPTIVE, _ADAPTIVE_STATE, _BLOCKED_IPS, _SRC_IPS
         sampler = None
         baseline_cpu = 0.0
         if args.impact:
