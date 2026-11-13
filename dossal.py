@@ -3432,8 +3432,8 @@ examples:
     ap.add_argument("--auto", action="store_true",
         help="대상 프로토콜 자동 감지 + 최적 모드 선택")
     ap.add_argument("--combo", default=None,
-        choices=['web', 'full', 'tls', 'proto', 'amplify', 'super'],
-        help="프리셋 조합: web(스피드+UDP+SYN), full(+RST), tls(TLS+H2+UDP), proto(gRPC+H2+UDP), amplify(확대5종), super(전체파워+스텔스+스피드)")
+        choices=['web', 'full', 'tls', 'proto', 'amplify', 'super', 'cdn'],
+        help="프리셋 조합: web(스피드+UDP+SYN), full(+RST), tls(TLS+H2+UDP), proto(gRPC+H2+UDP), amplify(확대5종), super(전체파워+스텔스+스피드), cdn(CDN바이패스)")
     ap.add_argument("--url", default='')
     ap.add_argument("--targets", default=None,
         help="여러 대상 URL (쉼표 구분, 동시에 공격). --url보다 우선")
