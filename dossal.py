@@ -3836,7 +3836,12 @@ examples:
         else:
             _SRC_IPS[0] = [ip.strip() for ip in args.src_ips.split(',') if ip.strip()]
         print(f"[src-ips] rotating {len(_SRC_IPS[0])} IPs: {_SRC_IPS[0]}", file=sys.stderr)
-
+    
+    # v13.6: --mode auto → --auto 플래그로 변환 (args.auto가 이미 True면 중복 방지)
+    if args.mode == 'auto' and not args.auto:
+        args.auto = True
+        args.mode = 'http'  # placeholder (auto가 실제로 설정)
+    
     if args.auto:
         probe = auto_probe(args.url)
         print(f"[auto] target: {probe['host']}:{probe['port']} ({probe['scheme']})", file=sys.stderr)
@@ -3880,7 +3885,7 @@ examples:
             args.conns = args.conns + ',' + ','.join(auto_conn_parts)
         else:
             args.conns = ','.join(auto_conn_parts)
-
+    
     modes = list(dict.fromkeys(m.strip() for m in args.mode.split(",")))  # dedupe, preserve order
 
     # v13.5: learned mode → 학습 데이터에서 최적 모드 교체
