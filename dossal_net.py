@@ -251,11 +251,19 @@ def run_controller(port=9999):
         except socket.timeout:
             pass
         
-        # Handle user input
-        import select
-        r, _, _ = select.select([sys.stdin], [], [], 0.1)
-        if r:
-            line = sys.stdin.readline().strip()
+        # Handle user input (v13.5: Windows 호환 — msvcrt 사용)
+        import sys as _sys
+        if _sys.platform == 'win32':
+            import msvcrt
+            if msvcrt.kbhit():
+                line = _sys.stdin.readline().strip()
+            else:
+                line = None
+        else:
+            import select
+            r, _, _ = select.select([sys.stdin], [], [], 0.1)
+            line = sys.stdin.readline().strip() if r else None
+        if line is not None:
             if not line:
                 # v13.4: stdin EOF → 종료
                 break
