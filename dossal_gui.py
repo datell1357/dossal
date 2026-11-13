@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v13.4 — GUI DoS Attack Tool (Windows-first, cross-platform)
+dossal v13.5 — GUI DoS Attack Tool (Windows-first, cross-platform)
 Requires: Python 3.8+, h2 (pip install h2)
 Run: python dossal_gui.py
 """
@@ -24,7 +24,7 @@ class DossalGUI:
     def __init__(self, root):
         """dossal GUI 초기화 (tkinter)."""
         self.root = root
-        root.title("dossal v13.4 — 종합 DoS 공격 도구")
+        root.title("dossal v13.5 — 종합 DoS 공격 도구")
         root.geometry("600x500")
         root.resizable(True, True)
         
@@ -295,7 +295,7 @@ class DossalGUI:
         self.mode_var = tk.StringVar(value="auto")
         ttk.Label(opt_frame, text="모드 (auto = 자동):").grid(row=7, column=0, sticky=tk.W, pady=2)
         mode_combo = ttk.Combobox(opt_frame, textvariable=self.mode_var, width=30,
-                                    values=['auto', 'raw', 'httpsmp', 'https', 'http', 'h2', 'h2mp', 'h3mp', 'grpc', 'grpcmp', 'quic', 'udp', 'tcp', 'syn', 'synack', 'rst', 'fin', 'websocket', 'wsm', 'slowloris', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached'])
+                                    values=['auto', 'learned', 'raw', 'httpsmp', 'https', 'http', 'h2', 'h2mp', 'h3mp', 'grpc', 'grpcmp', 'quic', 'udp', 'tcp', 'syn', 'synack', 'rst', 'fin', 'websocket', 'wsm', 'slowloris', 'dns', 'icmp', 'ssdp', 'ntp', 'memcached'])
         mode_combo.grid(row=7, column=1, sticky=tk.W, pady=2)
         
         # Combo attack
