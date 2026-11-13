@@ -1005,11 +1005,11 @@ def parse_ip_port(u):
 
 # ── HTTP response reader ──────────────────────────────────────────
 async def _read_http_response(reader):
-    """HTTP 응답을 Content-Length 기반으로 전체 읽기 (v13.5: 소버퍼 사용)"""
+    """HTTP 응답을 Content-Length 기반으로 전체 읽기 (v13.5: 빠른 읽기)"""
     header_data = b''
     while b'\r\n\r\n' not in header_data:
         try:
-            chunk = await asyncio.wait_for(reader.read(512), timeout=5.0)
+            chunk = await asyncio.wait_for(reader.read(65536), timeout=5.0)
         except asyncio.TimeoutError:
             return b''
         if not chunk:
@@ -1024,7 +1024,7 @@ async def _read_http_response(reader):
             content_length = int(line.split(':', 1)[1].strip())
             while len(body) < content_length:
                 try:
-                    chunk = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+                    chunk = await asyncio.wait_for(reader.read(65536), timeout=5.0)
                 except asyncio.TimeoutError:
                     break
                 if not chunk:
