@@ -308,6 +308,7 @@ class DossalGUI:
         ttk.Radiobutton(combo_frame, text="TLS", variable=self.combo_var, value="tls").pack(side=tk.LEFT, padx=2)
         ttk.Radiobutton(combo_frame, text="확대", variable=self.combo_var, value="amplify").pack(side=tk.LEFT, padx=2)
         ttk.Radiobutton(combo_frame, text="전체", variable=self.combo_var, value="full").pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(combo_frame, text="CDN", variable=self.combo_var, value="cdn").pack(side=tk.LEFT, padx=2)
         ttk.Radiobutton(combo_frame, text="⚡슈퍼", variable=self.combo_var, value="super").pack(side=tk.LEFT, padx=2)
         
         # Buttons
