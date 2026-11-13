@@ -3862,6 +3862,18 @@ examples:
             args.conns = ','.join(auto_conn_parts)
 
     modes = list(dict.fromkeys(m.strip() for m in args.mode.split(",")))  # dedupe, preserve order
+
+    # v13.5: learned mode → 학습 데이터에서 최적 모드 교체
+    if 'learned' in modes:
+        learned_mode, learned_threads, learn_info = _recommend_mode(args.url)
+        if learned_mode:
+            print(f"[learned] best: {learned_mode} ({learn_info})", file=sys.stderr)
+            learned_modes = learned_mode.split('+')
+            modes = [m for m in modes if m != 'learned'] + learned_modes
+        else:
+            print(f"[learned] no data, default: http", file=sys.stderr)
+            modes = [m for m in modes if m != 'learned'] + ['http']
+
     for m in modes:
         if m not in WORKERS:
             print(f"Unknown mode: {m}. Available: {', '.join(WORKERS.keys())}", file=sys.stderr)
