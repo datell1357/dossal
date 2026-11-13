@@ -2027,7 +2027,7 @@ def _mp_h2_flood(args_tuple):
                 if data:
                     ssock.sendall(data)
                 sent += min(streams, 100)
-                # Drain responses
+                # Drain responses (v13.5: 0.5s)
                 deadline = _time.time() + 0.5
                 while _time.time() < deadline:
                     try:
