@@ -897,7 +897,7 @@ from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 from h2.exceptions import FlowControlError  # v13.1: gRPC flow control 대응
 
-VERSION = "13.7"
+VERSION = "13.8"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -2027,7 +2027,7 @@ def _mp_h2_flood(args_tuple):
                 if data:
                     ssock.sendall(data)
                 sent += min(streams, 100)
-                # Drain responses (v13.5: 0.5s)
+                # Drain responses — v13.8: 0.5s 유지 (0.1s는 RPS 저하)
                 deadline = _time.time() + 0.5
                 while _time.time() < deadline:
                     try:
