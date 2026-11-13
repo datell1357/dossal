@@ -1005,11 +1005,11 @@ def parse_ip_port(u):
 
 # ── HTTP response reader ──────────────────────────────────────────
 async def _read_http_response(reader):
-    """HTTP 응답을 Content-Length 기반으로 전체 읽기"""
+    """HTTP 응답을 Content-Length 기반으로 전체 읽기 (v13.5: 소버퍼 사용)"""
     header_data = b''
     while b'\r\n\r\n' not in header_data:
         try:
-            chunk = await asyncio.wait_for(reader.read(1024), timeout=5.0)
+            chunk = await asyncio.wait_for(reader.read(512), timeout=5.0)
         except asyncio.TimeoutError:
             return b''
         if not chunk:
@@ -1024,7 +1024,7 @@ async def _read_http_response(reader):
             content_length = int(line.split(':', 1)[1].strip())
             while len(body) < content_length:
                 try:
-                    chunk = await asyncio.wait_for(reader.read(8192), timeout=5.0)
+                    chunk = await asyncio.wait_for(reader.read(4096), timeout=5.0)
                 except asyncio.TimeoutError:
                     break
                 if not chunk:
@@ -1067,10 +1067,17 @@ async def http_worker(name, url, stats, duration, stop, payload_size=0):
                 continue
             stats.requests += 1
             stats.bytes += len(resp)
+            del resp  # v13.5: 응답 버퍼 즉시 해제
         except (asyncio.TimeoutError, Exception):
             # v13.3: 종료 시점(0.3초 이내)의 예외는 정규 종료
             if not stop.is_set() and (_ht.time() - _http_start) < (duration - 0.3):
                 stats.errors += 1
+            # v13.5: 예외 시 연결 정리 (메모리 리크 방지)
+            try:
+                if writer.transport:
+                    writer.transport.abort()
+            except Exception:
+                pass
             break
     if writer.transport:
         writer.transport.abort()
@@ -1286,10 +1293,17 @@ async def https_worker(name, url, stats, duration, stop, payload_size=0):
                 continue
             stats.requests += 1
             stats.bytes += len(resp)
+            del resp  # v13.5: 응답 버퍼 즉시 해제
         except (asyncio.TimeoutError, Exception):
             # v12.9: stop 후(지정 시간 종료)의 예외는 정규 종료 — 에러로 세지 않음
             if not stop.is_set():
                 stats.errors += 1
+            # v13.5: 예외 시 연결 정리
+            try:
+                if writer.transport:
+                    writer.transport.abort()
+            except Exception:
+                pass
             break
     if writer.transport:
         writer.transport.abort()
