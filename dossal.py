@@ -3535,8 +3535,10 @@ examples:
             print(f"[recommend] best mode={mode}, threads={threads} ({info})")
         else:
             print(f"[recommend] {info}")
-        import sys as _sys
-        _sys.exit(0)
+        # v13.9: --recommend 후에도 공격 계속 (출력만 추가)
+        if not args.url:
+            import sys as _sys
+            _sys.exit(0)
     
     # v8.0: 완전 자동 모드
     if args.auto_full:
