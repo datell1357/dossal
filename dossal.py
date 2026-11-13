@@ -4025,7 +4025,8 @@ examples:
         return report
 
     report = asyncio.run(_run_all())
-    print(json.dumps(report, indent=2))
+    # v13.5: 단행 JSON (GUI 파싱 호환)
+    print(json.dumps(report))
     
     # v7.0: AI 학습 데이터 저장
     # v13.0: --learn 또는 --auto-full이면 자동 저장
