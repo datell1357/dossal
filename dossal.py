@@ -3420,7 +3420,7 @@ examples:
     ap.add_argument("--combo", default=None,
         choices=['web', 'full', 'tls', 'proto', 'amplify', 'super'],
         help="프리셋 조합: web(스피드+UDP+SYN), full(+RST), tls(TLS+H2+UDP), proto(gRPC+H2+UDP), amplify(확대5종), super(전체파워+스텔스+스피드)")
-    ap.add_argument("--url", required=True)
+    ap.add_argument("--url", default='')
     ap.add_argument("--targets", default=None,
         help="여러 대상 URL (쉼표 구분, 동시에 공격). --url보다 우선")
     ap.add_argument("--connections", type=int, default=100,
@@ -3484,6 +3484,12 @@ examples:
     ap.add_argument("--dry-run", action="store_true",
         help="시뮬레이션: 대상 탐지, 예측 RPS/IP 수 표시, 공격 안 함")
     args = ap.parse_args()
+
+    # v13.5: --targets 있으면 --url 필수 안 함 (첫 target을 url로 사용)
+    if not args.url and args.targets:
+        args.url = args.targets.split(',')[0].strip()
+    if not args.url:
+        ap.error("--url 또는 --targets 중 하나는 필요합니다")
 
     # v5.0 Phase 3: Origin IP Discovery
     if args.discover:
