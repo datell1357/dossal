@@ -3441,7 +3441,8 @@ examples:
         help="모드별 연결 수 (기본: 100)")
     ap.add_argument("--conns", default=None,
         help='모드별 연결 수 지정: "http=400,h2=80,udp=1,syn=10"')
-    ap.add_argument("--duration", type=int, default=10)
+    ap.add_argument("--duration", type=float, default=10,
+        help="공격 지속 시간 (초, 0.1~3600)")
     ap.add_argument("--payload-size", type=int, default=None,
         help="페이로드 크기 재지정 (모드별)")
     ap.add_argument("--impact", action="store_true",
