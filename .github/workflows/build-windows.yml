@@ -16,14 +16,14 @@ jobs:
       with:
         python-version: '3.14'
     
-    - name: Install PyInstaller
-      run: pip install pyinstaller
+    - name: Install dependencies
+      run: pip install pyinstaller h2 hpack hyperframe
     
-    - name: Build EXE
-      run: pyinstaller --onefile --name dossal --clean dossal.py
+    - name: Build CLI EXE
+      run: pyinstaller --onefile --name dossal --clean --hidden-import h2 --hidden-import hpack --hidden-import hyperframe dossal.py
     
     - name: Build GUI EXE
-      run: pyinstaller --onefile --name dossal-gui --windowed --clean dossal_gui.py
+      run: pyinstaller --onefile --name dossal-gui --windowed --clean --hidden-import h2 --hidden-import hpack --hidden-import hyperframe dossal_gui.py
     
     - name: Create ZIP
       run: |
