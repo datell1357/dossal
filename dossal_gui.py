@@ -524,28 +524,43 @@ class DossalGUI:
     
     """공격 백그라운드 실행 + live stats 파싱."""
     def _run_attack(self, cmd):
-        """백그라운드 스레드에서 dossal 엔진 직접 실행 (subprocess 없이)."""
+        """백그라운드 스레드에서 dossal.py subprocess 실행."""
         try:
-            # cmd[2:] = dossal.py의 argv (python_exe, dossal_py 제거)
-            argv = cmd[2:]
+            # dossal.py 경로 찾기 (_MEIPASS 또는 같은 폴더)
+            if getattr(sys, 'frozen', False):
+                # PyInstaller exe: _MEIPASS에서 dossal.py 찾기
+                base_dir = sys._MEIPASS
+            else:
+                # 개발 모드: 같은 폴더
+                base_dir = os.path.dirname(os.path.abspath(__file__))
             
-            # dossal 엔진 직접 호출 (ModuleError 발생 시 명확한 에러 표시)
-            try:
-                import dossal
-            except ImportError as e:
-                self.log(f"⚠️ dossal 엔진 로드 실패: {e}")
+            dossal_py = os.path.join(base_dir, 'dossal.py')
+            if not os.path.exists(dossal_py):
+                self.log(f"⚠️ dossal.py를 찾을 수 없습니다: {dossal_py}")
                 self.log("→ dossal.py가 exe에 포함되지 않았습니다. 다시 빌드하세요.")
                 return
-            report = dossal.run_from_argv(argv)
             
-            # 결과 저장
-            if report:
-                self.stats.update(report)
-                self.log(f"✅ 완료: {report.get('rps', 0):,.0f} RPS, {report.get('packets', 0):,} 패킷")
-                self.root.after(0, self._update_stats)
-            else:
-                self.log("⚠️ 결과가 없습니다 (모드 오류 또는 dry-run)")
-        
+            # subprocess로 dossal.py 실행
+            proc = subprocess.Popen(
+                [sys.executable, dossal_py] + cmd[2:],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            
+            # stdout에서 결과 읽기
+            output = proc.stdout.read()
+            for line in output.strip().split('\n'):
+                line = line.strip()
+                if line.startswith('{'):
+                    try:
+                        report = json.loads(line)
+                        self.stats.update(report)
+                        self.log(f"✅ 완료: {report.get('rps', 0):,.0f} RPS, {report.get('packets', 0):,} 패킷")
+                        self.root.after(0, self._update_stats)
+                    except:
+                        pass
+            
+            proc.wait()
+            
         except Exception as e:
             self.log(f"❌ 오류: {e}")
         finally:

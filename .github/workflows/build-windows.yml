@@ -1,29 +1,16 @@
 name: Build Windows EXE
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
+on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    - uses: actions/setup-python@v4
       with:
         python-version: '3.14'
-    
-    - name: Install dependencies
-      run: pip install pyinstaller h2 hpack hyperframe
-    
-    - name: Build GUI EXE (dossal.py 번들링)
-      run: pyinstaller --onefile --name dossal-gui --windowed --clean --hidden-import h2 --hidden-import hpack --hidden-import hyperframe --add-data "dossal.py;." dossal_gui.py
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
+    - run: pip install pyinstaller h2 hpack hyperframe
+    - run: pyinstaller --onefile --name dossal-gui --windowed --clean --hidden-import h2 --hidden-import hpack --hidden-import hyperframe --add-data "dossal.py;." dossal_gui.py
+    - uses: actions/upload-artifact@v4
       with:
         name: dossal-gui-windows
         path: dist/dossal-gui.exe
