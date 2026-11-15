@@ -189,12 +189,32 @@ class DossalGUI:
         # PC 사양 감지 (UI 변수가 먼저 생성되어야 함)
         self._pc_specs_raw = self._detect_pc_specs()
         
-        # Main frame
-        main = ttk.Frame(self.root, padding=10)
-        main.pack(fill=tk.BOTH, expand=True)
+        # Main frame with scrollbar
+        main_canvas = tk.Canvas(self.root, borderwidth=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=main_canvas.yview)
+        main_frame = ttk.Frame(main_canvas, padding=10)
+        
+        main_frame.bind("<Configure>", lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
+        main_canvas.create_window((0, 0), window=main_frame, anchor="nw")
+        main_canvas.configure(yscrollcommand=scrollbar.set)
+        
+        main_canvas.pack(side="left", fill=tk.BOTH, expand=True)
+        scrollbar.pack(side="right", fill=tk.Y)
+        
+        # Mouse wheel binding (macOS + Windows)
+        def _on_mousewheel(event):
+            if event.num == 4:
+                main_canvas.yview_scroll(-3, "units")
+            elif event.num == 5:
+                main_canvas.yview_scroll(3, "units")
+            elif hasattr(event, 'delta') and event.delta != 0:
+                main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        main_canvas.bind_all("<Button-4>", lambda e: main_canvas.yview_scroll(-3, "units"))
+        main_canvas.bind_all("<Button-5>", lambda e: main_canvas.yview_scroll(3, "units"))
         
         # Target section
-        target_frame = ttk.LabelFrame(main, text="🎯 대상", padding=10)
+        target_frame = ttk.LabelFrame(main_frame, text="🎯 대상", padding=10)
         target_frame.pack(fill=tk.X, pady=5)
         
         ttk.Label(target_frame, text="URL:", font=('', 10, 'bold')).grid(row=0, column=0, sticky=tk.W)
@@ -210,7 +230,7 @@ class DossalGUI:
         self.dur_entry.grid(row=1, column=1, sticky=tk.W, pady=5)
         
         # Profile presets (ONE-CLICK)
-        preset_frame = ttk.LabelFrame(main, text="⚡ 원클릭 프리셋", padding=10)
+        preset_frame = ttk.LabelFrame(main_frame, text="⚡ 원클릭 프리셋", padding=10)
         preset_frame.pack(fill=tk.X, pady=5)
         
         self.preset_var = tk.StringVar(value="super")
@@ -220,7 +240,7 @@ class DossalGUI:
         ttk.Radiobutton(preset_frame, text="⚡ 스피드", variable=self.preset_var, value="speed", command=self._apply_preset).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=2)
         
         # PC 자원 사용률 (25/50/75%)
-        usage_frame = ttk.LabelFrame(main, text="🎚️ PC 자원 사용률", padding=5)
+        usage_frame = ttk.LabelFrame(main_frame, text="🎚️ PC 자원 사용률", padding=5)
         usage_frame.pack(fill=tk.X, pady=5)
         self.usage_var = tk.StringVar(value="50")
         ttk.Radiobutton(usage_frame, text="25% 여유", variable=self.usage_var, value="25", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
@@ -228,7 +248,7 @@ class DossalGUI:
         ttk.Radiobutton(usage_frame, text="75% 강함", variable=self.usage_var, value="75", command=self._apply_preset).pack(side=tk.LEFT, padx=8)
         
         # Advanced options (collapsible)
-        opt_frame = ttk.LabelFrame(main, text="⚙️ 고급 옵션", padding=10)
+        opt_frame = ttk.LabelFrame(main_frame, text="⚙️ 고급 옵션", padding=10)
         opt_frame.pack(fill=tk.X, pady=5)
         
         self.fast_var = tk.BooleanVar(value=True)
@@ -312,7 +332,7 @@ class DossalGUI:
         ttk.Radiobutton(combo_frame, text="⚡슈퍼", variable=self.combo_var, value="super").pack(side=tk.LEFT, padx=2)
         
         # Buttons
-        btn_frame = ttk.Frame(main)
+        btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=10)
         
         self.start_btn = ttk.Button(btn_frame, text="▶️ 공격 시작", command=self.start_attack)
@@ -330,7 +350,7 @@ class DossalGUI:
         ttk.Button(btn_frame, text="테마", command=self.toggle_theme).pack(side=tk.RIGHT, padx=2)
         
         # Stats frame
-        stats_frame = ttk.LabelFrame(main, text="📈 실시간 통계", padding=5)
+        stats_frame = ttk.LabelFrame(main_frame, text="📈 실시간 통계", padding=5)
         stats_frame.pack(fill=tk.X, pady=5)
         
         self.rps_label = ttk.Label(stats_frame, text="요청/초: 0", font=('Consolas', 10))
@@ -357,7 +377,7 @@ class DossalGUI:
         self.server_status_label.pack(side=tk.RIGHT, padx=10)
         
         # 진행률 + 남은 시간
-        self.progress_frame = ttk.Frame(main)
+        self.progress_frame = ttk.Frame(main_frame)
         self.progress_frame.pack(fill=tk.X, pady=5)
         self.progress = ttk.Progressbar(self.progress_frame, orient=tk.HORIZONTAL, mode='determinate')
         self.progress.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -365,7 +385,7 @@ class DossalGUI:
         self.time_left_label.pack(side=tk.RIGHT, padx=(5, 0))
         
         # Live chart (RPS/PPS real-time)
-        chart_frame = ttk.LabelFrame(main, text="📊 실시간 차트", padding=5)
+        chart_frame = ttk.LabelFrame(main_frame, text="📊 실시간 차트", padding=5)
         chart_frame.pack(fill=tk.X, pady=5)
         self.chart = tk.Canvas(chart_frame, height=100, bg='#1a1a2e', highlightthickness=0)
         self.chart.pack(fill=tk.X)
@@ -375,7 +395,7 @@ class DossalGUI:
         self._chart_window = 60  # 60 data points
         
         # Log
-        log_frame = ttk.LabelFrame(main, text="📋 로그", padding=5)
+        log_frame = ttk.LabelFrame(main_frame, text="📋 로그", padding=5)
         log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, font=('Consolas', 9))
