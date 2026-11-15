@@ -524,7 +524,7 @@ class DossalGUI:
     
     """공격 백그라운드 실행 + live stats 파싱."""
     def _run_attack(self, cmd):
-        """백그라운드 스레드에서 dossal.py subprocess 실행."""
+        """백그라운드 스레드에서 dossal.py subprocess 실행 (창 없이)."""
         try:
             # dossal.py 경로 찾기 (_MEIPASS 또는 같은 폴더)
             if getattr(sys, 'frozen', False):
@@ -540,10 +540,24 @@ class DossalGUI:
                 self.log("→ dossal.py가 exe에 포함되지 않았습니다. 다시 빌드하세요.")
                 return
             
-            # subprocess로 dossal.py 실행
+            # subprocess로 dossal.py 실행 (창 없이)
+            # Windows: CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+            # macOS/Linux: STARTUPINFO로 창 숨김
+            import platform
+            kwargs = {}
+            if platform.system() == 'Windows':
+                # Windows: 창 없이 실행
+                CREATE_NO_WINDOW = 0x08000000
+                CREATE_NEW_PROCESS_GROUP = 0x00000200
+                kwargs['creationflags'] = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+            else:
+                # macOS/Linux: STARTUPINFO로 창 숨김 (best effort)
+                pass
+            
             proc = subprocess.Popen(
                 [sys.executable, dossal_py] + cmd[2:],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                **kwargs
             )
             
             # stdout에서 결과 읽기
@@ -599,8 +613,14 @@ class DossalGUI:
             messagebox.showerror("오류", "대상 URL을 입력하세요")
             return
         
-        cmd = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dossal.py')]
-        cmd.extend(['--url', url, '--dry-run'])
+        # dossal.py 경로 찾기 (공격과 동일)
+        if getattr(sys, 'frozen', False):
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+        dossal_py = os.path.join(base_dir, 'dossal.py')
+        
+        cmd = [sys.executable, dossal_py, '--url', url, '--dry-run']
         
         if self.stealth_var.get() or self.spoof_var.get():
             cmd.extend(['--spoof', '100'])
@@ -612,11 +632,15 @@ class DossalGUI:
         self.log("시뮬레이션 실행 중...")
         threading.Thread(target=self._run_dry, args=(cmd,), daemon=True).start()
     
-    """Dry-run 백그라운드 실행."""
+    """Dry-run 백그라운드 실행 (창 없이)."""
     def _run_dry(self, cmd):
-        """dry-run 출력 파싱 (백그라운드 스레드)."""
+        """dry-run 출력 파싱 (백그라운드 스레드, 창 없이)."""
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            import platform
+            kwargs = {}
+            if platform.system() == 'Windows':
+                kwargs['creationflags'] = 0x08000000  # CREATE_NO_WINDOW
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15, **kwargs)
             for line in proc.stderr.split('\n'):
                 if line.strip():
                     self.log(line.strip())
