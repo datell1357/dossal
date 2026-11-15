@@ -442,8 +442,24 @@ class DossalGUI:
         stealth = self.stealth_var.get()
         recovery = self.recovery_var.get()
         
-        # Build command
-        cmd = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dossal.py')]
+        # Build command (PyInstaller --onefile: _MEIPASS에서 dossal.py 찾기)
+        # exe 모드: sys.executable + _MEIPASS/dossal.py
+        # 개발 모드: python + dossal.py (같은 폴더)
+        if getattr(sys, 'frozen', False):
+            # PyInstaller exe
+            base_dir = sys._MEIPASS
+            python_exe = sys.executable  # self exe
+        else:
+            # 개발 모드 (python dossal_gui.py)
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            python_exe = sys.executable
+        
+        dossal_py = os.path.join(base_dir, 'dossal.py')
+        if not os.path.exists(dossal_py):
+            messagebox.showerror("오류", f"dossal.py를 찾을 수 없습니다:\n{dossal_py}")
+            self.running = False
+            return
+        cmd = [python_exe, dossal_py]
         cmd.extend(['--url', url, '--duration', str(duration), '--threads', str(threads)])
         
         combo = self.combo_var.get()

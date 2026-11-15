@@ -19,21 +19,11 @@ jobs:
     - name: Install dependencies
       run: pip install pyinstaller h2 hpack hyperframe
     
-    - name: Build CLI EXE
-      run: pyinstaller --onefile --name dossal --clean --hidden-import h2 --hidden-import hpack --hidden-import hyperframe dossal.py
-    
-    - name: Build GUI EXE
-      run: pyinstaller --onefile --name dossal-gui --windowed --clean --hidden-import h2 --hidden-import hpack --hidden-import hyperframe dossal_gui.py
-    
-    - name: Create ZIP
-      run: |
-        Compress-Archive -Path dist/dossal.exe, dist/dossal-gui.exe -DestinationPath dist/dossal-v15.9-windows.zip
+    - name: Build GUI EXE (dossal.py 번들링)
+      run: pyinstaller --onefile --name dossal-gui --windowed --clean --hidden-import h2 --hidden-import hpack --hidden-import hyperframe --add-data "dossal.py;." dossal_gui.py
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: dossal-v15.9-windows
-        path: |
-          dist/dossal.exe
-          dist/dossal-gui.exe
-          dist/dossal-v15.9-windows.zip
+        name: dossal-gui-windows
+        path: dist/dossal-gui.exe
