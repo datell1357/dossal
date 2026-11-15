@@ -25,7 +25,7 @@ class DossalGUI:
         """dossal GUI 초기화 (tkinter)."""
         self.root = root
         root.title("dossal v15.9 — 종합 DoS 공격 도구")
-        root.geometry("600x500")
+        root.geometry("900x800")
         root.resizable(True, True)
         
         self.attack_thread = None
