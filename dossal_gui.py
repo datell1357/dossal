@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v15.6 — GUI DoS Attack Tool (Windows-first, cross-platform)
+dossal v15.7 — GUI DoS Attack Tool (Windows-first, cross-platform)
 Requires: Python 3.8+, h2 (pip install h2)
 Run: python dossal_gui.py
 """
@@ -24,7 +24,7 @@ class DossalGUI:
     def __init__(self, root):
         """dossal GUI 초기화 (tkinter)."""
         self.root = root
-        root.title("dossal v15.6 — 종합 DoS 공격 도구")
+        root.title("dossal v15.7 — 종합 DoS 공격 도구")
         root.geometry("600x500")
         root.resizable(True, True)
         
