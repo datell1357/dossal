@@ -1,10 +1,9 @@
 name: Build Windows EXE
 
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,20 +12,28 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v4
       with:
-        python-version: '3.12'
+        python-version: '3.14'
     
-    - name: Install dependencies
-      run: |
-        pip install pyinstaller h2 psutil
+    - name: Install PyInstaller
+      run: pip install pyinstaller
     
     - name: Build EXE
+      run: pyinstaller --onefile --name dossal --clean dossal.py
+    
+    - name: Build GUI EXE
+      run: pyinstaller --onefile --name dossal-gui --windowed --clean dossal_gui.py
+    
+    - name: Create ZIP
       run: |
-        pyinstaller --clean --onefile --windowed --name dossal --add-data "dossal.py:." --add-data "README.md:." --hidden-import h2 --hidden-import psutil dossal_gui.py
+        Compress-Archive -Path dist/dossal.exe, dist/dossal-gui.exe -DestinationPath dist/dossal-v15.9-windows.zip
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: dossal-windows
-        path: dist/dossal.exe
+        name: dossal-v15.9-windows
+        path: |
+          dist/dossal.exe
+          dist/dossal-gui.exe
+          dist/dossal-v15.9-windows.zip
