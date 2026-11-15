@@ -4108,3 +4108,39 @@ def _generate_report(path, report, args):
 
 if __name__ == "__main__":
     main()
+
+def run_from_argv(argv):
+    """GUI용: argv list로 dossal 실행 (subprocess 없이).
+    
+    Returns: (report_dict, live_stats_callback)
+    GUI는 이 함수를 백그라운드 스레드에서 호출.
+    """
+    import argparse
+    # sys.argv를 임시로 교체
+    old_argv = sys.argv[:]
+    sys.argv = [sys.argv[0]] + argv
+    
+    # StringIO로 stdout/stderr 캡처
+    import io
+    from contextlib import redirect_stdout, redirect_stderr
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+    
+    try:
+        with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+            main()
+    finally:
+        sys.argv = old_argv
+    
+    # stdout에서 JSON 추출 (단행 JSON)
+    out = stdout_buf.getvalue()
+    report = {}
+    for line in out.strip().split('\n'):
+        line = line.strip()
+        if line.startswith('{'):
+            try:
+                report = json.loads(line)
+            except:
+                pass
+    
+    return report

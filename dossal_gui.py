@@ -442,23 +442,11 @@ class DossalGUI:
         stealth = self.stealth_var.get()
         recovery = self.recovery_var.get()
         
-        # Build command (PyInstaller --onefile: _MEIPASS에서 dossal.py 찾기)
-        # exe 모드: sys.executable + _MEIPASS/dossal.py
-        # 개발 모드: python + dossal.py (같은 폴더)
-        if getattr(sys, 'frozen', False):
-            # PyInstaller exe
-            base_dir = sys._MEIPASS
-            python_exe = sys.executable  # self exe
-        else:
-            # 개발 모드 (python dossal_gui.py)
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            python_exe = sys.executable
-        
-        dossal_py = os.path.join(base_dir, 'dossal.py')
-        if not os.path.exists(dossal_py):
-            messagebox.showerror("오류", f"dossal.py를 찾을 수 없습니다:\n{dossal_py}")
-            self.running = False
-            return
+        # Build command (dossal 엔진 직접 실행 - subprocess 없음)
+        # cmd = [python_exe, dossal_py, arg1, arg2, ...]
+        # _run_attack에서 cmd[2:]로 argv 추출
+        python_exe = sys.executable
+        dossal_py = "dossal.py"  # dossal.py가 import된 모듈이므로 경로 불필요
         cmd = [python_exe, dossal_py]
         cmd.extend(['--url', url, '--duration', str(duration), '--threads', str(threads)])
         
@@ -536,54 +524,21 @@ class DossalGUI:
     
     """공격 백그라운드 실행 + live stats 파싱."""
     def _run_attack(self, cmd):
-        """백그라운드 스레드에서 dossal CLI 실행 + 실시간 스탯 수집."""
+        """백그라운드 스레드에서 dossal 엔진 직접 실행 (subprocess 없이)."""
         try:
-            # Add --live for real-time stats
-            cmd = cmd + ['--live']
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # cmd[2:] = dossal.py의 argv (python_exe, dossal_py 제거)
+            argv = cmd[2:]
             
-            # Read stdout line by line for live stats
-            for line in (proc.stdout or []):
-                line = line.strip()
-                if not line:
-                    continue
-                # Live stats line: [30s] RPS=12345 PPS=67890 CONNS=8 ERR=0 429_IP=5 ACTIVE=95/100
-                if line.startswith('[') and 'RPS=' in line:
-                    # Parse live stats
-                    import re
-                    rps_m = re.search(r'RPS=([\d,]+)', line)
-                    pps_m = re.search(r'PPS=([\d,]+)', line)
-                    conns_m = re.search(r'CONNS=(\d+)', line)
-                    err_m = re.search(r'ERR=(\d+)', line)
-                    ip429_m = re.search(r'429_IP=(\d+)', line)
-                    active_m = re.search(r'ACTIVE=(\d+)/(\d+)', line)
-                    
-                    if rps_m:
-                        self.stats['rps'] = int(rps_m.group(1).replace(',', ''))
-                    if pps_m:
-                        self.stats['packets'] = int(pps_m.group(1).replace(',', ''))
-                    if conns_m:
-                        self.stats['connections_made'] = int(conns_m.group(1))
-                    if err_m:
-                        self.stats['errors'] = int(err_m.group(1))
-                    if ip429_m:
-                        self.stats['429_ips'] = int(ip429_m.group(1))
-                    if active_m:
-                        self.stats['active_ips'] = f"{active_m.group(1)}/{active_m.group(2)}"  # type: ignore
-                    
-                    self.log(f"실시간: RPS={self.stats.get('rps',0):,} PPS={self.stats.get('packets',0):,} 429_IP={self.stats.get('429_ips',0)}")
-                    self.root.after(0, self._update_stats)
-                elif line.startswith('{'):
-                    # Final JSON result
-                    try:
-                        data = json.loads(line)
-                        self.stats.update(data)
-                        self.log(f"완료: {data.get('rps', 0):,.0f} RPS, {data.get('packets', 0):,} 패킷")
-                    except:
-                        pass
+            # dossal 엔진 직접 호출
+            import dossal
+            report = dossal.run_from_argv(argv)
             
-            proc.wait()
-            
+            # 결과 저장
+            if report:
+                self.stats.update(report)
+                self.log(f"완료: {report.get('rps', 0):,.0f} RPS, {report.get('packets', 0):,} 패킷")
+                self.root.after(0, self._update_stats)
+        
         except Exception as e:
             self.log(f"오류: {e}")
         finally:
