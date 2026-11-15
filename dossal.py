@@ -897,7 +897,7 @@ from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 from h2.exceptions import FlowControlError  # v13.1: gRPC flow control 대응
 
-VERSION = "15.8"
+VERSION = "15.9"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
