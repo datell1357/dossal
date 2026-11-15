@@ -529,18 +529,25 @@ class DossalGUI:
             # cmd[2:] = dossal.py의 argv (python_exe, dossal_py 제거)
             argv = cmd[2:]
             
-            # dossal 엔진 직접 호출
-            import dossal
+            # dossal 엔진 직접 호출 (ModuleError 발생 시 명확한 에러 표시)
+            try:
+                import dossal
+            except ImportError as e:
+                self.log(f"⚠️ dossal 엔진 로드 실패: {e}")
+                self.log("→ dossal.py가 exe에 포함되지 않았습니다. 다시 빌드하세요.")
+                return
             report = dossal.run_from_argv(argv)
             
             # 결과 저장
             if report:
                 self.stats.update(report)
-                self.log(f"완료: {report.get('rps', 0):,.0f} RPS, {report.get('packets', 0):,} 패킷")
+                self.log(f"✅ 완료: {report.get('rps', 0):,.0f} RPS, {report.get('packets', 0):,} 패킷")
                 self.root.after(0, self._update_stats)
+            else:
+                self.log("⚠️ 결과가 없습니다 (모드 오류 또는 dry-run)")
         
         except Exception as e:
-            self.log(f"오류: {e}")
+            self.log(f"❌ 오류: {e}")
         finally:
             self.running = False
             self.root.after(0, self._on_complete)

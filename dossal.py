@@ -4112,10 +4112,9 @@ if __name__ == "__main__":
 def run_from_argv(argv):
     """GUI용: argv list로 dossal 실행 (subprocess 없이).
     
-    Returns: (report_dict, live_stats_callback)
+    Returns: report_dict ({} = 실패)
     GUI는 이 함수를 백그라운드 스레드에서 호출.
     """
-    import argparse
     # sys.argv를 임시로 교체
     old_argv = sys.argv[:]
     sys.argv = [sys.argv[0]] + argv
@@ -4129,6 +4128,9 @@ def run_from_argv(argv):
     try:
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
             main()
+    except SystemExit:
+        # main()이 sys.exit을 호출한 경우 (dry-run, unknown mode 등)
+        pass
     finally:
         sys.argv = old_argv
     
