@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dossal v15.9 — GUI DoS Attack Tool (Windows-first, cross-platform)
+dossal v15.10 — GUI DoS Attack Tool (Windows-first, cross-platform)
 Requires: Python 3.8+, h2 (pip install h2)
 Run: python dossal_gui.py
 """
@@ -12,19 +12,25 @@ try:
 except ImportError:
     psutil = None
 
-# Import dossal engine
+# Import dossal engine (v15.10: import 시점에 freeze_support 호출, spawn 자식 창 방지)
 try:
     import dossal
 except ImportError:
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import dossal
+    if getattr(sys, 'frozen', False):
+        # PyInstaller exe: dossal.py가 _MEIPASS에 있어야 함 (spec에 --add-data)
+        meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+        sys.path.insert(0, meipass)
+        import dossal
+    else:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import dossal
 
 class DossalGUI:
     """dossal GUI 메인 클래스 (tkinter)."""
     def __init__(self, root):
         """dossal GUI 초기화 (tkinter)."""
         self.root = root
-        root.title("dossal v15.9 — 종합 DoS 공격 도구")
+        root.title("dossal v15.10 — 종합 DoS 공격 도구")
         root.geometry("900x800")
         root.resizable(True, True)
         

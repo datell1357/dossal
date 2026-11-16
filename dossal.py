@@ -23,6 +23,15 @@ Modes:
   udy        : UDP datagram flood (alias for udp)
 Targets are local only. JSON stats output. Multi-mode: --mode http,h2,udp
 """
+import multiprocessing as _mp_module
+import atexit as _atexit
+# v15.10: spawn 자식 프로세스가 GUI 모듈(__main__)을 재import하지 않도록
+# _mp_module.freeze_support()를 import 시점에 한 번만 호출.
+# (GUI에서 "실행창 하나 더 뜬다" 버그의 근본 원인)
+try:
+    _mp_module.freeze_support()
+except Exception:
+    pass
 import asyncio, ssl, socket, json, math, struct, random, time, argparse, signal, sys, base64, os, logging, threading
 from urllib.parse import urlparse
 logging.getLogger('asyncio').setLevel(logging.CRITICAL)
@@ -897,7 +906,7 @@ from h2.config import H2Configuration
 from h2.events import ResponseReceived, DataReceived
 from h2.exceptions import FlowControlError  # v13.1: gRPC flow control 대응
 
-VERSION = "15.9"
+VERSION = "15.10"
 
 # ── TCP/IP checksum ──────────────────────────────────────────────
 def _tcp_checksum(src, dst, sport, dport, seq, ack, flags, payload=b""):
@@ -2592,7 +2601,12 @@ def _mp_http_send(args_tuple):
     return sent, errors, blocked, cur_ip
 
 async def _wait_pool(pool, async_result, timeout):
-    """multiprocessing pool 결과 대기 (executor 기반)"""
+    """multiprocessing pool 결과 대기 (executor 기반).
+    
+    v15.10: timeout 계산 버그 수정 — 이전: duration+15초 고정 (공격 시간과 무관하게
+    최소 15초 대기) → GUI에서 '공격 안됨'처럼 보임.
+    지금은 실제 남은 시간(remaining)만 대기.
+    """
     loop = asyncio.get_event_loop()
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ded:
@@ -2600,11 +2614,21 @@ async def _wait_pool(pool, async_result, timeout):
             results = await loop.run_in_executor(ded, async_result.get, timeout)
         except Exception:
             results = None
-    pool.close()
+    # v15.10: close 먼저, join은 별도 executor (close 후 join이 무한 대기하던 bug)
     try:
-        await loop.run_in_executor(None, pool.join)
+        pool.close()
     except Exception:
         pass
+    try:
+        await asyncio.wait_for(
+            loop.run_in_executor(None, pool.join),
+            timeout=3.0,
+        )
+    except (asyncio.TimeoutError, Exception):
+        try:
+            pool.terminate()
+        except Exception:
+            pass
     return results
 
 async def raw_worker(name, url, stats, duration, stop, payload_size=0):
@@ -4131,6 +4155,9 @@ def run_from_argv(argv):
     except SystemExit:
         # main()이 sys.exit을 호출한 경우 (dry-run, unknown mode 등)
         pass
+    except Exception as _e:
+        import traceback as _tb
+        _tb.print_exc(file=stderr_buf)
     finally:
         sys.argv = old_argv
     
