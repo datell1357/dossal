@@ -524,57 +524,33 @@ class DossalGUI:
     
     """공격 백그라운드 실행 + live stats 파싱."""
     def _run_attack(self, cmd):
-        """백그라운드 스레드에서 dossal.py subprocess 실행 (창 없이)."""
+        """백그라운드 스레드에서 dossal 엔진 직접 실행 (subprocess 없이, 창 없음)."""
         try:
-            # dossal.py 경로 찾기 (_MEIPASS 또는 같은 폴더)
-            if getattr(sys, 'frozen', False):
-                # PyInstaller exe: _MEIPASS에서 dossal.py 찾기
-                base_dir = sys._MEIPASS
-            else:
-                # 개발 모드: 같은 폴더
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-            
-            dossal_py = os.path.join(base_dir, 'dossal.py')
-            if not os.path.exists(dossal_py):
-                self.log(f"⚠️ dossal.py를 찾을 수 없습니다: {dossal_py}")
+            # dossal 엔진 직접 import (subprocess 없이 → 창 없음)
+            try:
+                import dossal
+            except ImportError as e:
+                self.log(f"⚠️ dossal 엔진 로드 실패: {e}")
                 self.log("→ dossal.py가 exe에 포함되지 않았습니다. 다시 빌드하세요.")
                 return
             
-            # subprocess로 dossal.py 실행 (창 없이)
-            # Windows: CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-            # macOS/Linux: STARTUPINFO로 창 숨김
-            import platform
-            kwargs = {}
-            if platform.system() == 'Windows':
-                # Windows: 창 없이 실행
-                CREATE_NO_WINDOW = 0x08000000
-                CREATE_NEW_PROCESS_GROUP = 0x00000200
-                kwargs['creationflags'] = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+            # cmd[2:] = dossal.py의 argv (python_exe, dossal_py 제거)
+            argv = cmd[2:]
+            
+            # 직접 실행 (메인 스레드가 아닌 백그라운드 스레드에서)
+            report = dossal.run_from_argv(argv)
+            
+            # 결과 처리
+            if report:
+                self.stats.update(report)
+                self.log(f"✅ 완료: {report.get('rps', 0):,.0f} RPS, {report.get('packets', 0):,} 패킷")
+                self.root.after(0, self._update_stats)
             else:
-                # macOS/Linux: STARTUPINFO로 창 숨김 (best effort)
-                pass
-            
-            proc = subprocess.Popen(
-                [sys.executable, dossal_py] + cmd[2:],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                **kwargs
-            )
-            
-            # stdout에서 결과 읽기
-            output = proc.stdout.read()
-            for line in output.strip().split('\n'):
-                line = line.strip()
-                if line.startswith('{'):
-                    try:
-                        report = json.loads(line)
-                        self.stats.update(report)
-                        self.log(f"✅ 완료: {report.get('rps', 0):,.0f} RPS, {report.get('packets', 0):,} 패킷")
-                        self.root.after(0, self._update_stats)
-                    except:
-                        pass
-            
-            proc.wait()
-            
+                self.log("⚠️ 결과가 없습니다 (모드 오류 또는 dry-run)")
+        
+        except SystemExit:
+            # dossal.main()이 sys.exit을 호출하면 여기 잡힘
+            pass
         except Exception as e:
             self.log(f"❌ 오류: {e}")
         finally:
@@ -634,17 +610,15 @@ class DossalGUI:
     
     """Dry-run 백그라운드 실행 (창 없이)."""
     def _run_dry(self, cmd):
-        """dry-run 출력 파싱 (백그라운드 스레드, 창 없이)."""
+        """dry-run 직접 실행 (subprocess 없이, 창 없음)."""
         try:
-            import platform
-            kwargs = {}
-            if platform.system() == 'Windows':
-                kwargs['creationflags'] = 0x08000000  # CREATE_NO_WINDOW
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15, **kwargs)
-            for line in proc.stderr.split('\n'):
-                if line.strip():
-                    self.log(line.strip())
+            import dossal
+            # cmd[2:] = dossal.py의 argv
+            argv = cmd[2:]
+            dossal.run_from_argv(argv)
             self.log("시뮬레이션 완료")
+        except SystemExit:
+            pass
         except Exception as e:
             self.log(f"시뮬레이션 오류: {e}")
     
